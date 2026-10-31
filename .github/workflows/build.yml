@@ -5,6 +5,9 @@ on:
   push:
     branches: [main]
 
+permissions:
+  contents: write
+
 jobs:
   build:
     runs-on: macos-latest
@@ -58,3 +61,19 @@ jobs:
           name: MicProbe-ipa
           path: ${{ runner.temp }}/ipa/MicProbe.ipa
           retention-days: 30
+
+      - name: 推送 ipa 到 ipa 分支（供 SSH 拉取）
+        run: |
+          set -euo pipefail
+          cd "$RUNNER_TEMP"
+          rm -rf ipa-repo
+          git init -q ipa-repo
+          cd ipa-repo
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          cp "$RUNNER_TEMP/ipa/MicProbe.ipa" .
+          git add MicProbe.ipa
+          git commit -qm "ipa build ${GITHUB_SHA::7}"
+          git remote add origin "https://x-access-token:${{ github.token }}@github.com/${GITHUB_REPOSITORY}.git"
+          git push -qf origin HEAD:refs/heads/ipa
+          echo "ipa 已推送到 ipa 分支"
