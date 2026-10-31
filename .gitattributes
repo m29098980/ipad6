@@ -1,0 +1,7 @@
+# 统一换行符，避免 Windows 的 CRLF 带到 macOS 构建机上
+* text=auto eol=lf
+
+*.png binary
+*.jpg binary
+*.ipa binary
+*.xcarchive binary
