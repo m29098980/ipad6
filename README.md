@@ -30,12 +30,12 @@ git add .
 git commit -m "init micprobe"
 ```
 
-先去 https://github.com/new 建一个仓库，名字随意（例如 `micprobe`），**选 Public**，不要勾选任何初始化文件。
+先去 https://github.com/new 建一个仓库，**选 Public**，**三个初始化勾选框都不要勾**。本工程对应仓库名为 `ipad6`。
 
-然后把本地仓库推上去：
+然后把本地仓库推上去（仓库地址已配好，直接推即可）：
 
 ```bash
-git remote add origin https://github.com/<你的用户名>/micprobe.git
+git remote add origin https://github.com/m29098980/ipad6.git
 git push -u origin main
 ```
 
