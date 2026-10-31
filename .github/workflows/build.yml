@@ -1,0 +1,60 @@
+name: build-ipa
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+
+jobs:
+  build:
+    runs-on: macos-latest
+    timeout-minutes: 30
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: 打印工具链版本
+        run: |
+          xcodebuild -version
+          xcode-select -p
+
+      - name: 安装 XcodeGen
+        run: brew install xcodegen
+
+      - name: 生成 Xcode 工程
+        run: xcodegen generate --spec project.yml
+
+      - name: 编译（不签名）
+        run: |
+          set -o pipefail
+          xcodebuild \
+            -project MicProbe.xcodeproj \
+            -scheme MicProbe \
+            -configuration Release \
+            -sdk iphoneos \
+            -destination 'generic/platform=iOS' \
+            -archivePath "$RUNNER_TEMP/MicProbe.xcarchive" \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGN_IDENTITY="" \
+            archive
+
+      - name: 打包成 ipa
+        run: |
+          set -euo pipefail
+          APP="$RUNNER_TEMP/MicProbe.xcarchive/Products/Applications/MicProbe.app"
+          test -d "$APP" || { echo "找不到 .app，编译失败"; exit 1; }
+          rm -rf "$RUNNER_TEMP/ipa"
+          mkdir -p "$RUNNER_TEMP/ipa/Payload"
+          cp -R "$APP" "$RUNNER_TEMP/ipa/Payload/"
+          cd "$RUNNER_TEMP/ipa"
+          zip -qry MicProbe.ipa Payload
+          ls -lh MicProbe.ipa
+          echo "IPA_PATH=$RUNNER_TEMP/ipa/MicProbe.ipa" >> "$GITHUB_ENV"
+
+      - name: 上传产物
+        uses: actions/upload-artifact@v4
+        with:
+          name: MicProbe-ipa
+          path: ${{ runner.temp }}/ipa/MicProbe.ipa
+          retention-days: 30

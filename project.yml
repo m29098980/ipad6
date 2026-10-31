@@ -1,0 +1,60 @@
+name: MicProbe
+
+options:
+  bundleIdPrefix: com.jychan
+  createIntermediateGroups: true
+  deploymentTarget:
+    iOS: "17.0"
+
+settings:
+  base:
+    SWIFT_VERSION: "5.0"
+    IPHONEOS_DEPLOYMENT_TARGET: "17.0"
+    TARGETED_DEVICE_FAMILY: "2"
+    ENABLE_BITCODE: NO
+    SUPPORTS_MACCATALYST: NO
+
+targets:
+  MicProbe:
+    type: application
+    platform: iOS
+    deploymentTarget: "17.0"
+    sources:
+      - path: Sources
+    info:
+      path: Support/Info.plist
+      properties:
+        CFBundleDisplayName: MicProbe
+        CFBundleName: MicProbe
+        CFBundleShortVersionString: "1.0"
+        CFBundleVersion: "1"
+        UILaunchScreen: {}
+        UIRequiresFullScreen: true
+        UIStatusBarStyle: UIStatusBarStyleDefault
+        UISupportedInterfaceOrientations~ipad:
+          - UIInterfaceOrientationPortrait
+          - UIInterfaceOrientationPortraitUpsideDown
+          - UIInterfaceOrientationLandscapeLeft
+          - UIInterfaceOrientationLandscapeRight
+        NSMicrophoneUsageDescription: 需要麦克风权限来采集音频、识别唤醒词并按需上传。
+        NSLocalNetworkUsageDescription: 需要访问局域网内的音频接收服务以上传采集到的声音片段。
+        NSAppTransportSecurity:
+          NSAllowsLocalNetworking: true
+        UIBackgroundModes:
+          - audio
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.jychan.micprobe
+        GENERATE_INFOPLIST_FILE: NO
+        INFOPLIST_FILE: Support/Info.plist
+        SWIFT_STRICT_CONCURRENCY: minimal
+
+schemes:
+  MicProbe:
+    build:
+      targets:
+        MicProbe: all
+    run:
+      config: Debug
+    archive:
+      config: Release
