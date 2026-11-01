@@ -50,8 +50,18 @@ jobs:
       - name: 打包 ipa
         run: |
           set -euo pipefail
-          APP="$RUNNER_TEMP/wda.xcarchive/Products/Applications/WebDriverAgentRunner-Runner.app"
-          test -d "$APP" || { echo "找不到 WDA app"; exit 1; }
+          APP=$(find "$RUNNER_TEMP/wda.xcarchive/Products" -maxdepth 4 -name "*.app" -type d | head -1 || true)
+          if [ -z "$APP" ]; then
+            find "$RUNNER_TEMP/wda.xcarchive" -maxdepth 5 > /tmp/werr.txt || true
+            mkdir -p /tmp/wlr && cd /tmp/wlr && git init -q
+            git config user.name "github-actions[bot]"
+            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+            cp /tmp/werr.txt wda-errors.txt
+            git add . && git commit -qm "wda pkg errors ${GITHUB_SHA::7}"
+            git push -qf "https://x-access-token:${{ github.token }}@github.com/${GITHUB_REPOSITORY}.git" HEAD:refs/heads/logs
+            echo "找不到打包产物"; exit 1
+          fi
+          echo "APP=$APP"
           rm -rf "$RUNNER_TEMP/wpa"
           mkdir -p "$RUNNER_TEMP/wpa/Payload"
           cp -R "$APP" "$RUNNER_TEMP/wpa/Payload/"
