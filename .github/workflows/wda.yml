@@ -1,0 +1,61 @@
+name: build-wda
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: macos-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: 克隆 WebDriverAgent
+        run: git clone --depth 1 https://github.com/appium/WebDriverAgent.git
+
+      - name: 编译（不签名）
+        run: |
+          set -o pipefail
+          cd WebDriverAgent
+          xcodebuild \
+            -project WebDriverAgent.xcodeproj \
+            -scheme WebDriverAgentRunner \
+            -configuration Release \
+            -sdk iphoneos \
+            -destination 'generic/platform=iOS' \
+            -archivePath "$RUNNER_TEMP/wda.xcarchive" \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGN_IDENTITY="" \
+            archive 2>&1 | tee /tmp/wda.log || {
+              grep -E "error:" /tmp/wda.log | sort -u | head -30
+              exit 1
+            }
+
+      - name: 打包 ipa
+        run: |
+          set -euo pipefail
+          APP="$RUNNER_TEMP/wda.xcarchive/Products/Applications/WebDriverAgentRunner-Runner.app"
+          test -d "$APP" || { echo "找不到 WDA app"; exit 1; }
+          rm -rf "$RUNNER_TEMP/wpa"
+          mkdir -p "$RUNNER_TEMP/wpa/Payload"
+          cp -R "$APP" "$RUNNER_TEMP/wpa/Payload/"
+          cd "$RUNNER_TEMP/wpa"
+          zip -qry wda.ipa Payload
+          ls -lh wda.ipa
+
+      - name: 推送 wda.ipa 到 ipa 分支
+        run: |
+          set -euo pipefail
+          cd "$RUNNER_TEMP"
+          rm -rf wda-repo && git init -q wda-repo && cd wda-repo
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          cp "$RUNNER_TEMP/wpa/wda.ipa" .
+          git add wda.ipa
+          git commit -qm "wda build"
+          git remote add origin "https://x-access-token:${{ github.token }}@github.com/${GITHUB_REPOSITORY}.git"
+          git push -qf origin HEAD:refs/heads/ipa
+          echo "wda.ipa 已推送到 ipa 分支"
