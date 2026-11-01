@@ -77,5 +77,5 @@ jobs:
           git add wda.ipa
           git commit -qm "wda build"
           git remote add origin "https://x-access-token:${{ github.token }}@github.com/${GITHUB_REPOSITORY}.git"
-          git push -qf origin HEAD:refs/heads/ipa
+          git push -qf origin HEAD:refs/heads/wda
           echo "wda.ipa 已推送到 ipa 分支"
