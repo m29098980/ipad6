@@ -17,6 +17,12 @@ enum Config {
     /// 攒够多少帧发一次（512 帧 × 32 ms ≈ 16.4 秒）
     static let framesPerUpload: Int = 512
 
+    /// 唤醒词文本（界面显示用，与 Model/keywords.txt 保持一致）
+    static let wakeWord = "85号"
+
+    /// 唤醒命中后状态灯保持高亮秒数
+    static let wakeupFlashSeconds = 3
+
     /// 界面电平刷新节流：每 N 帧更新一次 UI（3 帧 ≈ 10 Hz）
     static let uiTickInterval: Int = 3
 }

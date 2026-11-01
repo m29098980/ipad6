@@ -18,10 +18,14 @@ final class AudioEngine: ObservableObject {
     @Published private(set) var frameCount: Int = 0
     @Published private(set) var stateText: String = "待机"
     @Published private(set) var logs: [String] = []
+    @Published private(set) var wakeupCount: Int = 0
+    @Published private(set) var isWakeupActive = false
 
     // MARK: - 内部
 
     private let engine = AVAudioEngine()
+    private let kws = KwsEngine()
+    private var kwsReady = false
     private let processQueue = DispatchQueue(label: "com.jychan.micprobe.audio", qos: .userInitiated)
 
     private let targetFormat = AVAudioFormat(commonFormat: .pcmFormatInt16,
@@ -71,6 +75,16 @@ final class AudioEngine: ObservableObject {
 
             append("已启动，输入采样率 \(Int(AVAudioSession.sharedInstance().sampleRate)) Hz")
             if uplink == nil { append("未配置上传地址，仅本地统计电平") }
+
+            // 唤醒词引擎：只初始化一次，失败不阻塞采集
+            if !kwsReady {
+                if let err = kws.setup() {
+                    append("唤醒词引擎初始化失败：\(err)")
+                } else {
+                    kwsReady = true
+                    append("唤醒词引擎就绪，监听「\(Config.wakeWord)」")
+                }
+            }
         } catch {
             // 引擎启动失败时可能已经装了 tap，必须摘掉，否则下次开始会因重复安装崩溃
             if tapInstalled {
@@ -212,6 +226,14 @@ final class AudioEngine: ObservableObject {
             }
         }
 
+        // 唤醒词检测（同在 processQueue 串行执行）
+        if kwsReady, let kw = kws.feed(frame) {
+            DispatchQueue.main.async {
+                self.wakeupCount += 1
+                self.onWakeup(kw)
+            }
+        }
+
         // 可选：攒批上传原始 PCM
         if let uplink {
             uploadBatch.append(contentsOf: frame)
@@ -221,6 +243,19 @@ final class AudioEngine: ObservableObject {
                 uploadBatch.removeAll(keepingCapacity: true)
                 uplink.send(pcm: chunk)
             }
+        }
+    }
+
+    // MARK: - 唤醒命中
+
+    private func onWakeup(_ keyword: String) {
+        stateText = "听到：\(keyword)"
+        isWakeupActive = true
+        append("🔔 唤醒命中：\(keyword)（第 \(wakeupCount) 次）")
+        DispatchQueue.main.asyncAfter(deadline: .now() + .seconds(Config.wakeupFlashSeconds)) { [weak self] in
+            guard let self, self.isRunning else { return }
+            self.isWakeupActive = false
+            self.stateText = "监听中"
         }
     }
 

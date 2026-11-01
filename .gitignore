@@ -9,3 +9,8 @@ Support/Info.plist
 
 # 本地推送脚本，不进仓库
 *.bat
+MicProbe.ipa
+dist/
+dist/
+工具/
+MicProbe.ipa

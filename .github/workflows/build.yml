@@ -24,6 +24,24 @@ jobs:
       - name: 安装 XcodeGen
         run: brew install xcodegen
 
+      - name: 下载 KWS 唤醒模型（中文 zipformer 3.3M int8）
+        run: |
+          set -euo pipefail
+          mkdir -p Model
+          curl -sSL --retry 3 -o /tmp/kws.tar.bz2 \
+            https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/sherpa-onnx-kws-zipformer-wenetspeech-3.3M-2024-01-01.tar.bz2
+          mkdir -p /tmp/kws && tar xjf /tmp/kws.tar.bz2 -C /tmp/kws
+          D=/tmp/kws/sherpa-onnx-kws-zipformer-wenetspeech-3.3M-2024-01-01
+          cp "$D/encoder-epoch-12-avg-2-chunk-16-left-64.int8.onnx" Model/encoder.onnx 2>/dev/null \
+            || cp "$D/encoder-epoch-12-avg-2-chunk-16-left-64.onnx" Model/encoder.onnx
+          cp "$D/decoder-epoch-12-avg-2-chunk-16-left-64.onnx" Model/decoder.onnx 2>/dev/null \
+            || cp "$D/decoder-epoch-12-avg-2-chunk-16-left-64.int8.onnx" Model/decoder.onnx
+          cp "$D/joiner-epoch-12-avg-2-chunk-16-left-64.int8.onnx" Model/joiner.onnx 2>/dev/null \
+            || cp "$D/joiner-epoch-12-avg-2-chunk-16-left-64.onnx" Model/joiner.onnx
+          cp "$D/tokens.txt" Model/tokens.txt
+          cp keywords.txt Model/keywords.txt
+          ls -lh Model/
+
       - name: 生成 Xcode 工程
         run: xcodegen generate --spec project.yml
 

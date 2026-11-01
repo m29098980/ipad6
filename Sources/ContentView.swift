@@ -24,7 +24,7 @@ struct ContentView: View {
         VStack(spacing: 6) {
             Text("麦克风采集探针")
                 .font(.system(size: 34, weight: .bold))
-            Text("16 kHz · 单声道 · 512 样本/帧")
+            Text("16 kHz · 单声道 · 512 样本/帧 · 唤醒词「\(Config.wakeWord)」")
                 .font(.callout)
                 .foregroundStyle(.secondary)
         }
@@ -33,17 +33,24 @@ struct ContentView: View {
     private var statusRow: some View {
         HStack(spacing: 10) {
             Circle()
-                .fill(audio.isRunning ? Color.red : Color(uiColor: .systemGray3))
+                .fill(statusColor)
                 .frame(width: 13, height: 13)
             Text(audio.stateText)
                 .font(.title3.weight(.medium))
         }
     }
 
+    private var statusColor: Color {
+        if audio.isWakeupActive { return .green }
+        return audio.isRunning ? Color.red : Color(uiColor: .systemGray3)
+    }
+
     private var metrics: some View {
-        HStack(spacing: 40) {
+        HStack(spacing: 32) {
             metric(title: "电平", value: String(format: "%.1f dBFS", audio.levelDB))
             metric(title: "已处理帧", value: "\(audio.frameCount)")
+            metric(title: "唤醒",
+                   value: "\(audio.wakeupCount) 次")
             metric(title: "时长",
                    value: String(format: "%.1f s",
                                  Double(audio.frameCount * Config.frameSize) / Config.sampleRate))
