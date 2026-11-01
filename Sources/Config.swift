@@ -25,4 +25,7 @@ enum Config {
 
     /// 界面电平刷新节流：每 N 帧更新一次 UI（3 帧 ≈ 10 Hz）
     static let uiTickInterval: Int = 3
+
+    /// 诊断用：启动后自动开始采集（无人值守测试）。定位问题后改回 false。
+    static let autoStartOnLaunch = true
 }
