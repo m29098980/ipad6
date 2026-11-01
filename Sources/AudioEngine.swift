@@ -259,11 +259,29 @@ final class AudioEngine: ObservableObject {
         stateText = "听到：\(keyword)"
         isWakeupActive = true
         append("🔔 唤醒命中：\(keyword)（第 \(wakeupCount) 次）")
+
+        // 飞书群机器人通知
+        let fmt = DateFormatter()
+        fmt.dateFormat = "MM-dd HH:mm:ss"
+        let msg = "🔔 MicProbe 唤醒命中「\(keyword)」\n时间：\(fmt.string(from: Date()))\n第 \(wakeupCount) 次唤醒"
+        Feishu.send(text: msg) { [weak self] err in
+            if let err {
+                self?.append("飞书通知失败：\(err)")
+            } else {
+                self?.append("飞书通知已发送 ✓")
+            }
+        }
+
         DispatchQueue.main.asyncAfter(deadline: .now() + .seconds(Config.wakeupFlashSeconds)) { [weak self] in
             guard let self, self.isRunning else { return }
             self.isWakeupActive = false
             self.stateText = "监听中"
         }
+    }
+
+    /// 供界面设置栏写日志（如 Webhook 测试结果）
+    func logPublic(_ line: String) {
+        append(line)
     }
 
     // MARK: - 日志

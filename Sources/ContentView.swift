@@ -2,6 +2,7 @@ import SwiftUI
 
 struct ContentView: View {
     @ObservedObject var audio: AudioEngine
+    @State private var webhookDraft = ""
 
     var body: some View {
         VStack(spacing: 26) {
@@ -10,12 +11,16 @@ struct ContentView: View {
             LevelMeter(db: audio.levelDB)
             metrics
             actionButton
+            webhookBar
             logPanel
         }
         .padding(.horizontal, 48)
         .padding(.vertical, 32)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(Color(uiColor: .systemGroupedBackground))
+        .onAppear {
+            webhookDraft = Feishu.webhook
+        }
     }
 
     // MARK: - 区块
@@ -79,6 +84,40 @@ struct ContentView: View {
         }
         .buttonStyle(.borderedProminent)
         .tint(audio.isRunning ? Color(uiColor: .systemGray) : .accentColor)
+    }
+
+    /// 飞书 Webhook 设置栏：粘贴群机器人地址 + 测试按钮
+    private var webhookBar: some View {
+        HStack(spacing: 12) {
+            Image(systemName: "bell.badge")
+                .foregroundStyle(.secondary)
+            TextField("粘贴飞书群机器人 Webhook 地址（设置 → 群设置 → 群机器人 → 添加）",
+                      text: $webhookDraft)
+                .textFieldStyle(.roundedBorder)
+                .font(.system(size: 14))
+                .disableAutocorrection(true)
+                .textInputAutocapitalization(.never)
+                .onChange(of: webhookDraft) { Feishu.saveWebhook($0) }
+            Button {
+                if Feishu.webhook.isEmpty {
+                    audio.logPublic("Webhook 为空，请先粘贴地址")
+                    return
+                }
+                audio.logPublic("正在测试飞书通知…")
+                Feishu.send(text: "✅ MicProbe 测试消息：飞书通知链路已打通") { err in
+                    if let err {
+                        audio.logPublic("飞书测试失败：\(err)")
+                    } else {
+                        audio.logPublic("飞书测试成功 ✓ 请到群里查看消息")
+                    }
+                }
+            } label: {
+                Text("测试")
+                    .font(.callout.bold())
+            }
+            .buttonStyle(.bordered)
+        }
+        .frame(maxWidth: 620)
     }
 
     private var logPanel: some View {
