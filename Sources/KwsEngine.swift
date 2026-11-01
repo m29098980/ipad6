@@ -1,4 +1,5 @@
 import Foundation
+import SherpaOnnx
 
 /// 基于 sherpa-onnx KeywordSpotter 的离线唤醒词引擎
 /// 模型：sherpa-onnx-kws-zipformer-wenetspeech-3.3M（int8，中文，约 10 MB）
@@ -14,7 +15,7 @@ final class KwsEngine {
         let bundle = Bundle.main
 
         func path(_ name: String, _ ext: String) throws -> String {
-            guard let p = bundle.path(forResource: name, ofType: ext, subdirectory: "Model") else {
+            guard let p = bundle.path(forResource: name, ofType: ext, inDirectory: "Model") else {
                 throw NSError(domain: "KwsEngine", code: -1, userInfo: [
                     NSLocalizedDescriptionKey: "缺少模型文件 Model/\(name).\(ext)"
                 ])
