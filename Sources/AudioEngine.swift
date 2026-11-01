@@ -64,9 +64,12 @@ final class AudioEngine: ObservableObject {
     }
 
     private func beginCapture() {
+        NSLog("MPBOX: beginCapture enter")
         do {
             try configureSession()
+            NSLog("MPBOX: step1 session ok")
             try startEngine()
+            NSLog("MPBOX: step2 engine ok")
             uplink = Config.uploadURL.isEmpty ? nil : Uplink(urlString: Config.uploadURL)
 
             UIApplication.shared.isIdleTimerDisabled = true   // 屏幕常亮
@@ -78,18 +81,17 @@ final class AudioEngine: ObservableObject {
 
             // 唤醒词引擎：只初始化一次，失败不阻塞采集
             if !kwsReady {
+                NSLog("MPBOX: step3 kws init begin")
                 if let err = kws.setup() {
                     append("唤醒词引擎初始化失败：\(err)")
+                    NSLog("MPBOX: step3 kws init FAIL \(err)")
                 } else {
                     kwsReady = true
                     append("唤醒词引擎就绪，监听「\(Config.wakeWord)」")
-                    let droppedPath = NSTemporaryDirectory() + "keywords_dropped.txt"
-                    if let dropped = try? String(contentsOfFile: droppedPath, encoding: .utf8),
-                       !dropped.isEmpty {
-                        append("已过滤无效关键词：\(dropped.replacingOccurrences(of: "\n", with: " / "))")
-                    }
+                    NSLog("MPBOX: step3 kws init ok")
                 }
             }
+            NSLog("MPBOX: beginCapture done")
         } catch {
             // 引擎启动失败时可能已经装了 tap，必须摘掉，否则下次开始会因重复安装崩溃
             if tapInstalled {

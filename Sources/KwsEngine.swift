@@ -24,18 +24,22 @@ final class KwsEngine {
         }
 
         do {
+            NSLog("MPBOX: kws a) finding model files")
             let encoder = try path("encoder", "onnx")
             let decoder = try path("decoder", "onnx")
             let joiner  = try path("joiner",  "onnx")
             let tokens  = try path("tokens",  "txt")
             let kwFile  = try path("keywords", "txt")
+            NSLog("MPBOX: kws b) model files found")
 
             // 关键防御：sherpa-onnx 遇到词表里不存在的 token 会直接 LOG(FATAL) 终止进程。
             // 这里先把 keywords.txt 里每个 token 与 tokens.txt 比对，只保留合法行，写到临时文件。
             let tokensText = try String(contentsOfFile: tokens, encoding: .utf8)
+            NSLog("MPBOX: kws c) tokens loaded \(tokensText.count) chars")
             let vocab = Set(tokensText.split(separator: "\n").map { line in
                 line.split(separator: " ", omittingEmptySubsequences: true).first.map(String.init) ?? String(line)
             })
+            NSLog("MPBOX: kws d) vocab \(vocab.count) entries")
 
             let kwText = try String(contentsOfFile: kwFile, encoding: .utf8)
             var kept: [String] = []
@@ -58,6 +62,7 @@ final class KwsEngine {
             }
 
             let filtered = kept.joined(separator: "\n") + "\n"
+            NSLog("MPBOX: kws e) keywords kept \(kept.count) dropped \(dropped.count)")
             let filteredPath = NSTemporaryDirectory() + "keywords_filtered.txt"
             try filtered.write(toFile: filteredPath, atomically: true, encoding: .utf8)
 
@@ -73,7 +78,9 @@ final class KwsEngine {
                 ),
                 keywordsFile: filteredPath
             )
+            NSLog("MPBOX: kws f) before wrapper init")
             self.spotter = SherpaOnnxKeywordSpotterWrapper(config: &config)
+            NSLog("MPBOX: kws g) wrapper init ok")
             if !dropped.isEmpty {
                 // 通过静态变量把丢弃信息带回（简单做法：写到文件，AudioEngine 可读）
                 try (dropped.joined(separator: "\n")).write(

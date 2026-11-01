@@ -33,7 +33,7 @@ jobs:
             CODE_SIGNING_REQUIRED=NO \
             CODE_SIGN_IDENTITY="" \
             archive 2>&1 | tee /tmp/wda.log || {
-              grep -E "error:" /tmp/wda.log | sort -u | head -30 > /tmp/werr.txt
+              tail -150 /tmp/wda.log > /tmp/werr.txt
               mkdir -p /tmp/wlr && cd /tmp/wlr && git init -q
               git config user.name "github-actions[bot]"
               git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
@@ -42,6 +42,10 @@ jobs:
               git push -qf "https://x-access-token:${{ github.token }}@github.com/${GITHUB_REPOSITORY}.git" HEAD:refs/heads/logs
               exit 1
             }
+
+      - name: 查看产物路径
+        if: always()
+        run: find "$RUNNER_TEMP/wda.xcarchive" -maxdepth 4 -name "*.app" 2>/dev/null || true
 
       - name: 打包 ipa
         run: |
