@@ -30,6 +30,37 @@ final class KwsEngine {
             let tokens  = try path("tokens",  "txt")
             let kwFile  = try path("keywords", "txt")
 
+            // 关键防御：sherpa-onnx 遇到词表里不存在的 token 会直接 LOG(FATAL) 终止进程。
+            // 这里先把 keywords.txt 里每个 token 与 tokens.txt 比对，只保留合法行，写到临时文件。
+            let tokensText = try String(contentsOfFile: tokens, encoding: .utf8)
+            let vocab = Set(tokensText.split(separator: "\n").map { line in
+                line.split(separator: " ", omittingEmptySubsequences: true).first.map(String.init) ?? String(line)
+            })
+
+            let kwText = try String(contentsOfFile: kwFile, encoding: .utf8)
+            var kept: [String] = []
+            var dropped: [String] = []
+            for raw in kwText.split(separator: "\n") {
+                let line = raw.trimmingCharacters(in: .whitespaces)
+                guard !line.isEmpty, line.contains("@") else { continue }
+                let tokenPart = line[..<line.range(of: "@")!.lowerBound]
+                let toks = tokenPart.split(separator: " ").map(String.init)
+                if !toks.isEmpty && toks.allSatisfy(vocab.contains) {
+                    kept.append(line)
+                } else {
+                    dropped.append(line)
+                }
+            }
+            guard !kept.isEmpty else {
+                throw NSError(domain: "KwsEngine", code: -2, userInfo: [
+                    NSLocalizedDescriptionKey: "关键词全部不在模型词表中（共丢弃 \(dropped.count) 行）"
+                ])
+            }
+
+            let filtered = kept.joined(separator: "\n") + "\n"
+            let filteredPath = NSTemporaryDirectory() + "keywords_filtered.txt"
+            try filtered.write(toFile: filteredPath, atomically: true, encoding: .utf8)
+
             var config = sherpaOnnxKeywordSpotterConfig(
                 featConfig: sherpaOnnxFeatureConfig(sampleRate: 16_000, featureDim: 80),
                 modelConfig: sherpaOnnxOnlineModelConfig(
@@ -40,9 +71,15 @@ final class KwsEngine {
                         joiner: joiner
                     )
                 ),
-                keywordsFile: kwFile
+                keywordsFile: filteredPath
             )
             self.spotter = SherpaOnnxKeywordSpotterWrapper(config: &config)
+            if !dropped.isEmpty {
+                // 通过静态变量把丢弃信息带回（简单做法：写到文件，AudioEngine 可读）
+                try (dropped.joined(separator: "\n")).write(
+                    toFile: NSTemporaryDirectory() + "keywords_dropped.txt",
+                    atomically: true, encoding: .utf8)
+            }
             return nil
         } catch {
             return error.localizedDescription

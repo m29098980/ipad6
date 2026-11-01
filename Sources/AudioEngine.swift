@@ -83,6 +83,11 @@ final class AudioEngine: ObservableObject {
                 } else {
                     kwsReady = true
                     append("唤醒词引擎就绪，监听「\(Config.wakeWord)」")
+                    let droppedPath = NSTemporaryDirectory() + "keywords_dropped.txt"
+                    if let dropped = try? String(contentsOfFile: droppedPath, encoding: .utf8),
+                       !dropped.isEmpty {
+                        append("已过滤无效关键词：\(dropped.replacingOccurrences(of: "\n", with: " / "))")
+                    }
                 }
             }
         } catch {
