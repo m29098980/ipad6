@@ -29,7 +29,7 @@ jobs:
           set -euo pipefail
           mkdir -p Model
           curl -sSL --retry 3 -o /tmp/kws.tar.bz2 \
-            https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/sherpa-onnx-kws-zipformer-wenetspeech-3.3M-2024-01-01.tar.bz2
+            https://github.com/k2-fsa/sherpa-onnx/releases/download/kws-models/sherpa-onnx-kws-zipformer-wenetspeech-3.3M-2024-01-01.tar.bz2
           mkdir -p /tmp/kws && tar xjf /tmp/kws.tar.bz2 -C /tmp/kws
           D=/tmp/kws/sherpa-onnx-kws-zipformer-wenetspeech-3.3M-2024-01-01
           cp "$D/encoder-epoch-12-avg-2-chunk-16-left-64.int8.onnx" Model/encoder.onnx 2>/dev/null \
