@@ -28,11 +28,11 @@ jobs:
             -configuration Release \
             -sdk iphoneos \
             -destination 'generic/platform=iOS' \
-            -archivePath "$RUNNER_TEMP/wda.xcarchive" \
+            -derivedDataPath "$RUNNER_TEMP/wda-dd" \
             CODE_SIGNING_ALLOWED=NO \
             CODE_SIGNING_REQUIRED=NO \
             CODE_SIGN_IDENTITY="" \
-            archive 2>&1 | tee /tmp/wda.log || {
+            build 2>&1 | tee /tmp/wda.log || {
               tail -150 /tmp/wda.log > /tmp/werr.txt
               mkdir -p /tmp/wlr && cd /tmp/wlr && git init -q
               git config user.name "github-actions[bot]"
@@ -42,17 +42,14 @@ jobs:
               git push -qf "https://x-access-token:${{ github.token }}@github.com/${GITHUB_REPOSITORY}.git" HEAD:refs/heads/logs
               exit 1
             }
-
-      - name: 查看产物路径
-        if: always()
-        run: find "$RUNNER_TEMP/wda.xcarchive" -maxdepth 4 -name "*.app" 2>/dev/null || true
+          find "$RUNNER_TEMP/wda-dd/Build/Products" -maxdepth 2 -name "*.app" || true
 
       - name: 打包 ipa
         run: |
           set -euo pipefail
-          APP=$(find "$RUNNER_TEMP/wda.xcarchive/Products" -maxdepth 4 -name "*.app" -type d | head -1 || true)
+          APP=$(find "$RUNNER_TEMP/wda-dd/Build/Products" -maxdepth 3 -name "*.app" -type d | head -1 || true)
           if [ -z "$APP" ]; then
-            find "$RUNNER_TEMP/wda.xcarchive" -maxdepth 5 > /tmp/werr.txt || true
+            find "$RUNNER_TEMP/wda-dd" -maxdepth 5 > /tmp/werr.txt || true
             mkdir -p /tmp/wlr && cd /tmp/wlr && git init -q
             git config user.name "github-actions[bot]"
             git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
