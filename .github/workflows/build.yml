@@ -58,7 +58,17 @@ jobs:
             CODE_SIGNING_ALLOWED=NO \
             CODE_SIGNING_REQUIRED=NO \
             CODE_SIGN_IDENTITY="" \
-            archive
+            archive 2>&1 | tee /tmp/build.log || {
+              grep -E "error:" /tmp/build.log | sort -u | head -50 > /tmp/errors.txt
+              mkdir -p /tmp/lr && cd /tmp/lr && git init -q
+              git config user.name "github-actions[bot]"
+              git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+              cp /tmp/errors.txt build-errors.txt
+              git add . && git commit -qm "errors ${GITHUB_SHA::7}"
+              git push -qf "https://x-access-token:${{ github.token }}@github.com/${GITHUB_REPOSITORY}.git" HEAD:refs/heads/logs
+              echo "编译错误已推送到 logs 分支"
+              exit 1
+            }
 
       - name: 打包成 ipa
         run: |
