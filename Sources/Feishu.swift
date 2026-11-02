@@ -116,8 +116,9 @@ enum Feishu {
             }
             exchangeCode(code: code, appID: cfg.appID, secret: cfg.secret, log: log)
         }
-        session.presentationContextProvider = { anchor in
-            anchor.windows.first { $0.isKeyWindow }
+        // presentationContextProvider 是对象而非闭包；UIWindowScene 已实现该协议
+        if let scene = UIApplication.shared.connectedScenes.first as? UIWindowScene {
+            session.presentationContextProvider = scene
         }
         authSession = session
         session.start()
