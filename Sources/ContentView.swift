@@ -137,7 +137,7 @@ struct ContentView: View {
                 HStack(spacing: 6) {
                     Image(systemName: "mic.fill")
                         .foregroundStyle(.orange)
-                    Text("速记中…说「结束 / 发送 / 完毕」发送")
+                    Text("速记中…说「结束 / 发送完毕」发送")
                         .font(.footnote.bold())
                         .foregroundStyle(.orange)
                 }

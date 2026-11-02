@@ -4,5 +4,4 @@ b ā w ǔ h āo @85号
 w ǔ h ào @85号
 b ā sh í w ǔ h ào @85号
 j ié sh ù @结束
-f ā s òng @发送
-w án b ì @完毕
+f ā s òng w án b ì @发送完毕

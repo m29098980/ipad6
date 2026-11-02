@@ -33,10 +33,11 @@ enum Config {
     static let feishuDefaultReceiveID = "ou_16f6a5bbf67b40482fabaca6ccf74d5d"
 
     /// 结束速记的关键词（与 keywords.txt 里的结束词 @显示名 一致）
-    static let endWords: Set<String> = ["结束", "发送", "完毕"]
+    /// 「发送」「完毕」单独词太容易在日常话语里误触发，改用四字词组「发送完毕」
+    static let endWords: Set<String> = ["结束", "发送完毕"]
 
     /// 速记最长秒数，超时自动结束并发送
-    static let maxDictationSeconds = 60
+    static let maxDictationSeconds = 120
 
     /// 命中结束语后从录音尾部剪掉的帧数（512 样本 = 32 ms；31 帧 ≈ 1 秒，用于剪掉「结束」的读音）
     static let endTrimFrames = 31
