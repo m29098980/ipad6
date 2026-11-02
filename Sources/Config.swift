@@ -28,4 +28,7 @@ enum Config {
 
     /// 诊断用：启动后自动开始采集（无人值守测试）。定位问题后改回 false。
     static let autoStartOnLaunch = true
+
+    /// 飞书应用模式的默认接收者：用户本人 open_id（配置里省略接收者时用它）
+    static let feishuDefaultReceiveID = "ou_16f6a5bbf67b40482fabaca6ccf74d5d"
 }

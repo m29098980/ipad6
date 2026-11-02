@@ -91,7 +91,7 @@ struct ContentView: View {
         HStack(spacing: 12) {
             Image(systemName: "bell.badge")
                 .foregroundStyle(.secondary)
-            TextField("粘贴飞书群机器人 Webhook 地址（设置 → 群设置 → 群机器人 → 添加）",
+            TextField("飞书通知：粘贴 Webhook 地址，或 AppID,AppSecret（机器人名义私聊发给你）",
                       text: $webhookDraft)
                 .textFieldStyle(.roundedBorder)
                 .font(.system(size: 14))
@@ -100,7 +100,7 @@ struct ContentView: View {
                 .onChange(of: webhookDraft) { Feishu.saveWebhook($0) }
             Button {
                 if Feishu.webhook.isEmpty {
-                    audio.logPublic("Webhook 为空，请先粘贴地址")
+                    audio.logPublic("配置为空：请粘贴 Webhook 地址或 AppID,AppSecret")
                     return
                 }
                 audio.logPublic("正在测试飞书通知…")
@@ -108,7 +108,7 @@ struct ContentView: View {
                     if let err {
                         audio.logPublic("飞书测试失败：\(err)")
                     } else {
-                        audio.logPublic("飞书测试成功 ✓ 请到群里查看消息")
+                        audio.logPublic("飞书测试成功 ✓ 请查看机器人私聊消息")
                     }
                 }
             } label: {

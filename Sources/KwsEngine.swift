@@ -76,7 +76,10 @@ final class KwsEngine {
                         joiner: joiner
                     )
                 ),
-                keywordsFile: filteredPath
+                keywordsFile: filteredPath,
+                // 灵敏度调优：分数加权提高、命中门槛降低（默认 score 1.0 / threshold 0.25）
+                keywordsScore: 1.6,
+                keywordsThreshold: 0.05
             )
             NSLog("MPBOX: kws f) before wrapper init")
             self.spotter = SherpaOnnxKeywordSpotterWrapper(config: &config)
