@@ -74,11 +74,10 @@ enum OpusCodec {
         let outBufSize = 131_072
         let outData = UnsafeMutableRawPointer.allocate(byteCount: outBufSize, alignment: 16)
         defer { outData.deallocate() }
-        // outPacketDescription 是「指针的指针」的数组（每元素可空）
-        let packetDescs = UnsafeMutablePointer<UnsafeMutablePointer<AudioStreamPacketDescription>?>
+        // outPacketDescription（FillComplexBuffer 参数是单指针数组；回调里才是双指针）
+        let packetDescs = UnsafeMutablePointer<AudioStreamPacketDescription>
             .allocate(capacity: maxPacketsPerCall)
         defer { packetDescs.deallocate() }
-        for i in 0..<maxPacketsPerCall { packetDescs[i] = nil }
 
         let abl = AudioBufferList.allocate(maximumBuffers: 1)
         defer { abl.unsafeMutablePointer.deallocate() }
@@ -101,7 +100,7 @@ enum OpusCodec {
                 if got > 0, produced > 0 {
                     let chunk = Data(bytes: outData, count: Int(produced))
                     for i in 0..<got {
-                        guard let d = packetDescs[i]?.pointee else { continue }
+                        let d = packetDescs[i]
                         let start = Int(d.mStartOffset)
                         let size = Int(d.mDataByteSize)
                         guard start >= 0, size > 0, start + size <= chunk.count else { continue }
@@ -130,12 +129,14 @@ enum OpusCodec {
         }
         let n = min(remain, Int(ioNumPackets.pointee))
         ioNumPackets.pointee = UInt32(n)
-        ioData.pointee.mNumberBuffers = 1
-        ioData.pointee.mBuffers.mNumberChannels = 1
-        ioData.pointee.mBuffers.mDataByteSize = UInt32(n * 2)
-        ioData.pointee.mBuffers.mData =
-            UnsafeMutableRawPointer(mutating: UnsafeRawPointer(ctx.samples.baseAddress!
-                .advanced(by: ctx.pos)))
+        // 数组内存由 ctx 稳定持有（COW 未触发），converter 在本轮 FillComplexBuffer 内消费
+        ctx.samples.withUnsafeBufferPointer { src in
+            ioData.pointee.mNumberBuffers = 1
+            ioData.pointee.mBuffers.mNumberChannels = 1
+            ioData.pointee.mBuffers.mDataByteSize = UInt32(n * 2)
+            ioData.pointee.mBuffers.mData =
+                UnsafeMutableRawPointer(mutating: UnsafeRawPointer(src.baseAddress!.advanced(by: ctx.pos)))
+        }
         ctx.pos += n
         return noErr
     }
