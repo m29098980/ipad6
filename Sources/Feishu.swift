@@ -148,9 +148,9 @@ enum Feishu {
             let fmt = DateFormatter()
             fmt.dateFormat = "HHmmss"
             let name = "MicProbe-速记-\(fmt.string(from: Date())).wav"
-            uploadFile(token: token, wav: wav, name: name) { upErr, fileId in
+            uploadFile(token: token, wav: wav, name: name) { upErr, fileKey in
                 if let upErr { completion(upErr); return }
-                guard let fileId else { completion("上传成功但未返回 file_id"); return }
+                guard let fileKey else { completion("上传成功但未返回 file_key"); return }
                 var comps = URLComponents(string: "https://open.feishu.cn/open-apis/im/v1/messages")!
                 comps.queryItems = [URLQueryItem(name: "receive_id_type", value: "open_id")]
                 guard let url = comps.url else {
@@ -159,7 +159,7 @@ enum Feishu {
                 }
                 postJSON(url: url,
                          body: ["receive_id": cfg.receive, "msg_type": "file",
-                                "content": #"{"file_id":"\#(fileId)"}"#],
+                                "content": #"{"file_key":"\#(fileKey)}"#],
                          headers: ["Authorization": "Bearer \(token)"]) { data, resp, err in
                     completion(judgeCode(data: data, resp: resp, err: err))
                 }
@@ -204,12 +204,12 @@ enum Feishu {
             guard let data,
                   let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
                   (obj["code"] as? Int ?? -1) == 0,
-                  let fileId = (obj["data"] as? [String: Any])?["file_id"] as? String else {
+                  let fileKey = (obj["data"] as? [String: Any])?["file_key"] as? String else {
                 let msg = (data.flatMap { try? JSONSerialization.jsonObject(with: $0) as? [String: Any] })?["msg"] as? String ?? ""
                 completion("上传失败 \(msg)", nil)
                 return
             }
-            completion(nil, fileId)
+            completion(nil, fileKey)
         }.resume()
     }
 
