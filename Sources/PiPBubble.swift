@@ -170,30 +170,23 @@ final class PiPBubble: NSObject {
     }
 }
 
-// MARK: - PiP 播放代理
+// MARK: - PiP 播放代理（只实现协议要求的 4 个 required 成员）
 
 extension PiPBubble: AVPictureInPictureSampleBufferPlaybackDelegate {
 
     func pictureInPictureController(_ pictureInPictureController: AVPictureInPictureController,
                                     setPlaying playing: Bool) {}
 
-    func pictureInPictureControllerTimeControlDidChanged(_ pictureInPictureController: AVPictureInPictureController) {}
+    func pictureInPictureControllerTimeRangeForPlayback(_ pictureInPictureController: AVPictureInPictureController) -> CMTimeRange {
+        CMTimeRange(start: .zero, duration: CMTime(value: 1, timescale: 2))
+    }
+
+    func pictureInPictureControllerIsPlaybackPaused(_ pictureInPictureController: AVPictureInPictureController) -> Bool {
+        false
+    }
 
     func pictureInPictureController(_ pictureInPictureController: AVPictureInPictureController,
                                     didTransitionToRenderSize newRenderSize: CMVideoDimensions) {}
-
-    func pictureInPictureController(_ pictureInPictureController: AVPictureInPictureController,
-                                    skipByInterval skipInterval: CMTime,
-                                    completion completionHandler: @escaping () -> Void) {
-        completionHandler()
-    }
-
-    var isPlaybackPaused: Bool { false }
-    var timeRange: CMTimeRange { CMTimeRange(start: .zero, duration: CMTime(value: 1, timescale: 2)) }
-    var duration: CMTime { CMTime(value: 1, timescale: 2) }
-    var playbackRate: Float { 1.0 }
-    var isPlaybackBufferEmpty: Bool { false }
-    var isPlaybackBufferFull: Bool { true }
 }
 
 // MARK: - PiP 生命周期代理

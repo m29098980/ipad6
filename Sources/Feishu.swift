@@ -173,8 +173,7 @@ enum Feishu {
     }
 
     private static func uploadFile(token: String, wav: Data, name: String,
-                                   completion: @escaping (String?, String?) -> Void) {
-        let boundary = "MicProbe\(Int(Date().timeIntervalSince1970 * 1000))"
+                                   completion: @escaping (String?, String?) -> Void) {        let boundary = "MicProbe\(Int(Date().timeIntervalSince1970 * 1000))"
         guard let url = URL(string: "https://open.feishu.cn/open-apis/im/v1/files") else {
             completion("URL 错误", nil)
             return
@@ -198,6 +197,96 @@ enum Feishu {
         body.append(Data("Content-Disposition: form-data; name=\"file\"; filename=\"\(name)\"\r\n".utf8))
         body.append(Data("Content-Type: application/octet-stream\r\n\r\n".utf8))
         body.append(wav)
+        body.append(Data("\r\n--\(boundary)--\r\n".utf8))
+        req.httpBody = body
+
+        URLSession.shared.dataTask(with: req) { data, resp, err in
+            if let err {
+                completion("上传网络错误：\(err.localizedDescription)", nil)
+                return
+            }
+            guard let data,
+                  let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+                  (obj["code"] as? Int ?? -1) == 0,
+                  let fileKey = (obj["data"] as? [String: Any])?["file_key"] as? String else {
+                let msg = (data.flatMap { try? JSONSerialization.jsonObject(with: $0) as? [String: Any] })?["msg"] as? String ?? ""
+                completion("上传失败 \(msg)", nil)
+                return
+            }
+            completion(nil, fileKey)
+        }.resume()
+    }
+
+    /// 发送飞书「语音消息」（聊天气泡样式，可长按转文字）。
+    /// 要求 ogg 为 Ogg Opus 格式（飞书语音消息只收 opus）。
+    /// 仅支持应用模式；webhook 模式不支持语音消息。
+    static func sendVoice(ogg: Data, durationMS: Int,
+                          completion: @escaping (String?) -> Void) {
+        let raw = webhook
+        guard let cfg = parseAppConfig(raw) else {
+            completion("发语音消息需要应用模式配置（AppID,AppSecret）")
+            return
+        }
+        guard !ogg.isEmpty else {
+            completion("语音数据为空")
+            return
+        }
+        getToken(appID: cfg.appID, secret: cfg.secret) { tokenErr, token in
+            if let tokenErr { completion(tokenErr); return }
+            guard let token else { completion("获取 tenant_access_token 失败"); return }
+            let fmt = DateFormatter()
+            fmt.dateFormat = "HHmmss"
+            let name = "MicProbe-速记-\(fmt.string(from: Date())).opus"
+            uploadVoice(token: token, opus: ogg, name: name, durationMS: durationMS) { upErr, fileKey in
+                if let upErr { completion(upErr); return }
+                guard let fileKey else { completion("上传成功但未返回 file_key"); return }
+                var comps = URLComponents(string: "https://open.feishu.cn/open-apis/im/v1/messages")!
+                comps.queryItems = [URLQueryItem(name: "receive_id_type", value: "open_id")]
+                guard let url = comps.url else {
+                    completion("构造消息 URL 失败")
+                    return
+                }
+                guard let cd = try? JSONSerialization.data(withJSONObject: ["file_key": fileKey]),
+                      let content = String(data: cd, encoding: .utf8) else {
+                    completion("构造 audio content 失败")
+                    return
+                }
+                postJSON(url: url,
+                         body: ["receive_id": cfg.receive, "msg_type": "audio", "content": content],
+                         headers: ["Authorization": "Bearer \(token)"]) { data, resp, err in
+                    completion(judgeCode(data: data, resp: resp, err: err))
+                }
+            }
+        }
+    }
+
+    /// 上传语音文件（file_type=opus）
+    private static func uploadVoice(token: String, opus: Data, name: String, durationMS: Int,
+                                    completion: @escaping (String?, String?) -> Void) {
+        let boundary = "MicProbeOpus\(Int(Date().timeIntervalSince1970 * 1000))"
+        guard let url = URL(string: "https://open.feishu.cn/open-apis/im/v1/files") else {
+            completion("URL 错误", nil)
+            return
+        }
+        var req = URLRequest(url: url, timeoutInterval: 30)
+        req.httpMethod = "POST"
+        req.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        req.setValue("multipart/form-data; boundary=\(boundary)", forHTTPHeaderField: "Content-Type")
+
+        var body = Data()
+        func field(_ n: String, _ v: String) {
+            body.append(Data("--\(boundary)\r\n".utf8))
+            body.append(Data("Content-Disposition: form-data; name=\"\(n)\"\r\n\r\n".utf8))
+            body.append(Data(v.utf8))
+            body.append(Data("\r\n".utf8))
+        }
+        field("file_type", "opus")
+        field("file_name", name)
+        field("duration", String(durationMS))   // 语音时长（毫秒）
+        body.append(Data("--\(boundary)\r\n".utf8))
+        body.append(Data("Content-Disposition: form-data; name=\"file\"; filename=\"\(name)\"\r\n".utf8))
+        body.append(Data("Content-Type: application/opus\r\n\r\n".utf8))
+        body.append(opus)
         body.append(Data("\r\n--\(boundary)--\r\n".utf8))
         req.httpBody = body
 
