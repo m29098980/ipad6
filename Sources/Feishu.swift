@@ -89,9 +89,9 @@ enum Feishu {
         guard let listener = try? NWListener(using: .tcp, on: 8766) else { return false }
         listener.newConnectionHandler = { conn in
             conn.start(queue: DispatchQueue(label: "micprobe.auth"))
-            conn.receive(minimumIncompleteLength: 1, maximumLength: 16_384) { _, data, _, _ in
+            conn.receive(minimumIncompleteLength: 1, maximumLength: 16_384) { data, _, _, _ in
                 defer { conn.cancel() }
-                guard let data else { return }
+                guard let data, !data.isEmpty else { return }
                 let head = String(decoding: data.prefix(4096), as: UTF8.self)
                 guard let line = head.split(separator: "\r\n").first else { return }
                 let parts = line.split(separator: " ")
