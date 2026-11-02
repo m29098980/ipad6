@@ -28,13 +28,11 @@ final class AudioEngine: ObservableObject {
     private let engine = AVAudioEngine()
     private let kws = KwsEngine()
     private var kwsReady = false
-    private let asr = AsrEngine()
-    private var asrReady = false
     /// 速记状态的真实值（processQueue 上读写），isDictating 是它的主线程镜像
     private var dictating = false
     private var dictationStartedAt: TimeInterval = 0
-    private var asrLatestText = ""
-    private var asrUiTick = 0
+    /// 速记期间的原声 PCM（16 kHz Int16 单声道）
+    private var dictationPCM: [Int16] = []
     private var wakeCounter = 0
     private let processQueue = DispatchQueue(label: "com.jychan.micprobe.audio", qos: .userInitiated)
 
@@ -107,18 +105,8 @@ final class AudioEngine: ObservableObject {
                     NSLog("MPBOX: step3 kws init ok")
                 }
             }
-            // 语音识别引擎：速记转写用，失败同样不阻塞
-            if !asrReady {
-                NSLog("MPBOX: step4 asr init begin")
-                if let err = asr.setup() {
-                    append("语音识别引擎初始化失败：\(err)")
-                    NSLog("MPBOX: step4 asr init FAIL \(err)")
-                } else {
-                    asrReady = true
-                    append("语音识别引擎就绪：说「\(Config.wakeWord)」→ 说话 →「结束/发送/完毕」发飞书")
-                    NSLog("MPBOX: step4 asr init ok")
-                }
-            }
+            // 速记模式说明（原声录音，不做端上转写）
+            append("速记模式：说「\(Config.wakeWord)」开始原声录音，「结束/发送/完毕」后语音发飞书")
             NSLog("MPBOX: beginCapture done")
         } catch {
             // 引擎启动失败时可能已经装了 tap，必须摘掉，否则下次开始会因重复安装崩溃
@@ -266,16 +254,11 @@ final class AudioEngine: ObservableObject {
             handleKeyword(kw)
         }
 
-        // 速记转写：唤醒后把帧喂给 ASR，刷新 UI 并检查超时
-        if asrReady && dictating {
-            asrLatestText = asr.feed(frame)
-            asrUiTick += 1
-            if asrUiTick % 15 == 0 {   // ≈0.5 秒刷新一次
-                let text = asrLatestText
-                DispatchQueue.main.async { self.dictationText = text }
-            }
+        // 速记：原声录音（不转写），检查超时
+        if dictating {
+            dictationPCM.append(contentsOf: frame)
             if Date().timeIntervalSince1970 - dictationStartedAt > Double(Config.maxDictationSeconds) {
-                finishDictation(reason: "超时自动发送")
+                finishDictation(reason: "超时自动发送", trimEnd: false)
             }
         }
 
@@ -305,7 +288,7 @@ final class AudioEngine: ObservableObject {
             startDictation(count: count)
         } else if Config.endWords.contains(kw) {
             if dictating {
-                finishDictation(reason: "说「\(kw)」")
+                finishDictation(reason: "说「\(kw)」", trimEnd: true)
             } else {
                 append("（忽略「\(kw)」：当前不在速记中）")
             }
@@ -315,53 +298,42 @@ final class AudioEngine: ObservableObject {
     private func startDictation(count: Int) {
         dictating = true
         dictationStartedAt = Date().timeIntervalSince1970
-        asrLatestText = ""
-        asr.restart()
+        dictationPCM = []
 
         DispatchQueue.main.async {
             self.isDictating = true
             self.dictationText = ""
             self.stateText = "🎙 速记中"
             self.isWakeupActive = true
-            self.append("🎙 开始速记（第 \(count) 次），说「结束 / 发送 / 完毕」发送，\(Config.maxDictationSeconds) 秒自动发送")
+            self.append("🎙 开始速记（第 \(count) 次），原声录音中。说「结束 / 发送 / 完毕」发送，\(Config.maxDictationSeconds) 秒自动发送")
         }
     }
 
-    /// 去掉识别文本尾部被一并转写进去的结束语（可能带空白，且可能连续出现）
-    private func stripEndWords(_ raw: String) -> String {
-        var t = raw
-        let words = Config.endWords.sorted { $0.count > $1.count }
-        while true {
-            let trimmed = t.trimmingCharacters(in: .whitespacesAndNewlines)
-            if let w = words.first(where: { trimmed.hasSuffix($0) }) {
-                t = String(trimmed.dropLast(w.count))
-            } else {
-                return trimmed
-            }
-        }
-    }
-
-    private func finishDictation(reason: String) {
+    private func finishDictation(reason: String, trimEnd: Bool) {
         guard dictating else { return }
         dictating = false
-        let content = stripEndWords(asrLatestText)
-        asr.restart()
-        asrLatestText = ""
+        var samples = dictationPCM
+        dictationPCM = []
+        if trimEnd {
+            // 结束语是说完才被识别的，尾巴上还带着「结束」的读音，剪掉约 1 秒
+            let cut = Config.endTrimFrames * Config.frameSize
+            if samples.count > cut { samples = Array(samples.dropLast(cut)) }
+        }
+        let durationSec = Double(samples.count) / Config.sampleRate
+        let finalSamples = samples
 
         DispatchQueue.main.async {
             self.isDictating = false
             self.isWakeupActive = false
             self.stateText = "监听中"
-            self.append("🎙 速记结束（\(reason)）：\(content.isEmpty ? "（未识别到内容）" : content)")
+            self.append("🎙 速记结束（\(reason)），录到 \(String(format: "%.1f", durationSec)) 秒，正在发飞书…")
             self.dictationText = ""
 
-            // 只发送内容本身；没识别到内容不发，避免打扰
-            guard !content.isEmpty else { return }
-            Feishu.send(text: content) { [weak self] err in
+            Feishu.sendAudio(pcm: finalSamples, sampleRate: Int(Config.sampleRate)) { [weak self] err in
                 if let err {
-                    self?.append("飞书发送失败：\(err)")
+                    self?.append("飞书语音发送失败：\(err)")
                 } else {
-                    self?.append("飞书已发送 ✓")
+                    self?.append("飞书语音已发送 ✓（\(String(format: "%.1f", durationSec)) 秒 WAV）")
                 }
             }
         }

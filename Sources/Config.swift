@@ -37,4 +37,7 @@ enum Config {
 
     /// 速记最长秒数，超时自动结束并发送
     static let maxDictationSeconds = 60
+
+    /// 命中结束语后从录音尾部剪掉的帧数（512 样本 = 32 ms；31 帧 ≈ 1 秒，用于剪掉「结束」的读音）
+    static let endTrimFrames = 31
 }

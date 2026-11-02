@@ -99,7 +99,7 @@ struct ContentView: View {
                         .font(.footnote.bold())
                         .foregroundStyle(.orange)
                 }
-                Text(audio.dictationText.isEmpty ? "（聆听中…）" : audio.dictationText)
+                Text(audio.dictationText.isEmpty ? "（原声录音中…）" : audio.dictationText)
                     .font(.body)
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .padding(12)
