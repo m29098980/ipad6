@@ -326,14 +326,23 @@ final class AudioEngine: ObservableObject {
             self.isDictating = false
             self.isWakeupActive = false
             self.stateText = "监听中"
-            self.append("🎙 速记结束（\(reason)），录到 \(String(format: "%.1f", durationSec)) 秒，正在发飞书…")
+            self.append("🎙 速记结束（\(reason)），录到 \(String(format: "%.1f", durationSec)) 秒，正在转写…")
             self.dictationText = ""
 
-            Feishu.sendAudio(pcm: finalSamples, sampleRate: Int(Config.sampleRate)) { [weak self] err in
-                if let err {
-                    self?.append("飞书语音发送失败：\(err)")
+            // 优先本地 Qwen3-ASR 转文字发飞书；失败退回发 WAV 语音文件
+            RemoteASR.transcribe(pcm: finalSamples, sampleRate: Int(Config.sampleRate)) { [weak self] result in
+                guard let self else { return }
+                let trimmed = result.trimmingCharacters(in: .whitespacesAndNewlines)
+                if !trimmed.isEmpty && !trimmed.hasPrefix("转写失败") && !trimmed.hasPrefix("没有录到音频") {
+                    self.append("转写结果：\(trimmed)")
+                    Feishu.send(text: trimmed) { err in
+                        self.append(err.map { "飞书发送失败：\($0)" } ?? "飞书文字已发送 ✓")
+                    }
                 } else {
-                    self?.append("飞书语音已发送 ✓（\(String(format: "%.1f", durationSec)) 秒 WAV）")
+                    self.append("\(trimmed)，改发语音文件")
+                    Feishu.sendAudio(pcm: finalSamples, sampleRate: Int(Config.sampleRate)) { err in
+                        self.append(err.map { "飞书语音发送失败：\($0)" } ?? "飞书语音已发送 ✓（\(String(format: "%.1f", durationSec)) 秒 WAV）")
+                    }
                 }
             }
         }
