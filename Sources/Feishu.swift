@@ -28,7 +28,7 @@ enum Feishu {
     /// App 在 127.0.0.1:8766 起临时 HTTP 监听接授权回调，回环不触发本地网络权限。
     static let redirectURI = "http://127.0.0.1:8766/callback"
     /// 授权 scope：发消息 + 离线访问（换取 refresh_token 长期续期）
-    static let oauthScopes = "im:message im:message:send_as_user offline_access"
+    static let oauthScopes = "im:message im:message.send_as_user offline_access"
 
     /// 是否已绑定用户身份（有未过期的 refresh_token 即视为已绑定）
     static var userTokenBound: Bool {
