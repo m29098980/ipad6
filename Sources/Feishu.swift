@@ -159,7 +159,7 @@ enum Feishu {
                 }
                 postJSON(url: url,
                          body: ["receive_id": cfg.receive, "msg_type": "file",
-                                "content": "{\"file_id\":\"\(fileId)\"}],
+                                "content": #"{"file_id":"\#(fileId)"}"#],
                          headers: ["Authorization": "Bearer \(token)"]) { data, resp, err in
                     completion(judgeCode(data: data, resp: resp, err: err))
                 }
