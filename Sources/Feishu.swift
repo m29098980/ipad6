@@ -157,9 +157,14 @@ enum Feishu {
                     completion("构造消息 URL 失败")
                     return
                 }
+                // content 必须是「JSON 字符串」，用 JSONSerialization 生成，杜绝手拼引号错误
+                guard let cd = try? JSONSerialization.data(withJSONObject: ["file_key": fileKey]),
+                      let content = String(data: cd, encoding: .utf8) else {
+                    completion("构造 file content 失败")
+                    return
+                }
                 postJSON(url: url,
-                         body: ["receive_id": cfg.receive, "msg_type": "file",
-                                "content": #"{"file_key":"\#(fileKey)}"#],
+                         body: ["receive_id": cfg.receive, "msg_type": "file", "content": content],
                          headers: ["Authorization": "Bearer \(token)"]) { data, resp, err in
                     completion(judgeCode(data: data, resp: resp, err: err))
                 }

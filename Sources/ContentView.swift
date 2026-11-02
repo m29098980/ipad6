@@ -1,12 +1,52 @@
 import SwiftUI
+import UIKit
 
 struct ContentView: View {
     @ObservedObject var audio: AudioEngine
     @State private var webhookDraft = ""
+    @AppStorage("mini_mode") private var isMini = false
 
     var body: some View {
+        Group {
+            if isMini {
+                FloatingBubble(audio: audio) {
+                    withAnimation(.easeInOut(duration: 0.2)) { isMini = false }
+                }
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topTrailing)
+                .padding(.init(top: 24, leading: 0, bottom: 0, trailing: 24))
+            } else {
+                mainContent
+            }
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .background(isMini ? Color.clear : Color(uiColor: .systemGroupedBackground))
+        .onAppear {
+            webhookDraft = Feishu.webhook
+            applyWindowBackground(clear: isMini)
+        }
+        .onChange(of: isMini) { applyWindowBackground(clear: $0) }
+    }
+
+    /// 悬浮球模式把窗口背景变透明，其余恢复
+    private func applyWindowBackground(clear: Bool) {
+        guard let scene = UIApplication.shared.connectedScenes.first as? UIWindowScene,
+              let win = scene.windows.first else { return }
+        win.backgroundColor = clear ? UIColor.clear : UIColor.systemGroupedBackground
+    }
+
+    private var mainContent: some View {
         VStack(spacing: 26) {
-            header
+            HStack(alignment: .top) {
+                header
+                Spacer()
+                Button {
+                    withAnimation(.easeInOut(duration: 0.2)) { isMini = true }
+                } label: {
+                    Label("悬浮球", systemImage: "record.circle")
+                        .font(.footnote.medium)
+                }
+                .buttonStyle(.bordered)
+            }
             statusRow
             LevelMeter(db: audio.levelDB)
             dictationBar
@@ -17,11 +57,6 @@ struct ContentView: View {
         }
         .padding(.horizontal, 48)
         .padding(.vertical, 32)
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .background(Color(uiColor: .systemGroupedBackground))
-        .onAppear {
-            webhookDraft = Feishu.webhook
-        }
     }
 
     // MARK: - 区块
