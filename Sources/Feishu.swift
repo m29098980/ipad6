@@ -78,6 +78,17 @@ enum Feishu {
     // MARK: - 用户身份（OAuth user_access_token）
 
     private static var authSession: ASWebAuthenticationSession?
+    /// 持有锚点对象，防止授权期间被释放
+    private static var authAnchor: AuthAnchor?
+
+    /// 授权页展示锚点：返回 keyWindow 作为弹出容器
+    private final class AuthAnchor: NSObject, ASWebAuthenticationPresentationContextProviding {
+        weak var window: UIWindow?
+        init(window: UIWindow) { self.window = window }
+        func presentationAnchor(for session: ASWebAuthenticationSession) -> ASPresentationAnchor {
+            window ?? ASPresentationAnchor()
+        }
+    }
 
     /// 打开飞书授权页，引导用户登录并授权，回调后自动换取并保存 token。
     static func startUserAuth(log: @escaping (String) -> Void) {
@@ -116,9 +127,12 @@ enum Feishu {
             }
             exchangeCode(code: code, appID: cfg.appID, secret: cfg.secret, log: log)
         }
-        // presentationContextProvider 需要实现协议的对象；UIWindow 已实现（返回自身作锚点）
-        if let scene = UIApplication.shared.connectedScenes.first as? UIWindowScene {
-            session.presentationContextProvider = scene.keyWindow
+        // presentationContextProvider 需要自定义对象实现协议（UIKit 类型未隐式实现）
+        if let scene = UIApplication.shared.connectedScenes.first as? UIWindowScene,
+           let win = scene.keyWindow {
+            let anchor = AuthAnchor(window: win)
+            authAnchor = anchor
+            session.presentationContextProvider = anchor
         }
         authSession = session
         session.start()
