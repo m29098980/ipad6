@@ -17,7 +17,7 @@ final class PiPBubble: NSObject {
 
     private let displayLayer = AVSampleBufferDisplayLayer()
     private var pipController: AVPictureInPictureController?
-    private var format: CMVideoFormatDescription?
+    private var format: CMFormatDescription?
     private var timer: Timer?
     private weak var audio: AudioEngine?
     private weak var hostView: UIView?
@@ -79,7 +79,7 @@ final class PiPBubble: NSObject {
             sampleBufferDisplayLayer: displayLayer,
             playbackDelegate: self)
         let pip = AVPictureInPictureController(contentSource: source)
-        pip?.canStartPictureInPictureAutomaticallyFromInline = true  // 按 Home 自动进 PiP
+        pip.canStartPictureInPictureAutomaticallyFromInline = true  // 按 Home 自动进 PiP
         pipController = pip
     }
 
@@ -102,7 +102,7 @@ final class PiPBubble: NSObject {
             c.fill(CGRect(origin: .zero, size: size))
             // 状态圆点
             color.setFill()
-            c.fillEllipse(in: CGRect(x: 56, y: frameH / 2 - 24, width: 48, height: 48))
+            c.cgContext.fillEllipse(in: CGRect(x: 56, y: frameH / 2 - 24, width: 48, height: 48))
             // 状态文字
             let attrs: [NSAttributedString.Key: Any] = [
                 .font: UIFont.systemFont(ofSize: 54, weight: .semibold),
@@ -119,12 +119,13 @@ final class PiPBubble: NSObject {
         }
         guard let cg = img.cgImage else { return }
 
-        // 画进 CVPixelBuffer
-        var pb: CVPixelBuffer?
-        CVPixelBufferCreate(kCFAllocatorDefault, frameW, frameH, kCVPixelFormatType_32BGRA, nil, &pb)
-        guard let pb else { return }
+        // 画进 CVPixelBuffer（BGRA）
+        var pbBox: CVPixelBuffer?
+        let createStatus = CVPixelBufferCreate(kCFAllocatorDefault, frameW, frameH,
+                                               kCVPixelFormatType_32BGRA, nil, &pbBox)
+        guard createStatus == noErr, let pb = pbBox else { return }
         CVPixelBufferLockBaseAddress(pb, [])
-        defer { CVPixelBufferUnlockBaseAddress(pb!) }
+        defer { CVPixelBufferUnlockBaseAddress(pb, []) }
         guard let ctx = CGContext(data: CVPixelBufferGetBaseAddress(pb),
                                   width: frameW, height: frameH,
                                   bitsPerComponent: 8,
@@ -132,38 +133,60 @@ final class PiPBubble: NSObject {
                                   space: CGColorSpaceCreateDeviceRGB(),
                                   bitmapInfo: CGImageAlphaInfo.premultipliedFirst.rawValue
                                             | CGBitmapInfo.byteOrder32Little.rawValue) else { return }
-        // CGBitmapContext 坐标系 y 向下，图像直接整幅绘制方向一致（renderer 输出已是方向正确的位图）
         ctx.draw(cg, in: CGRect(x: 0, y: 0, width: frameW, height: frameH))
         enqueue(pb)
     }
 
     private func enqueue(_ pb: CVPixelBuffer) {
         if format == nil {
-            format = try? CMVideoFormatDescription(
-                videoCodecType: .h264,
-                dimensions: CMVideoDimensions(width: Int32(frameW), height: Int32(frameH)))
+            var fmtOut: CMFormatDescription?
+            let st = CMVideoFormatDescriptionCreate(
+                allocator: kCFAllocatorDefault,
+                codecType: kCMVideoCodecType_MPEG4Video,
+                width: Int32(frameW),
+                height: Int32(frameH),
+                extensions: nil,
+                formatDescriptionOut: &fmtOut)
+            guard st == noErr, let fmt = fmtOut else { return }
+            format = fmt
         }
         guard let fmt = format else { return }
         var timing = CMSampleTimingInfo(
             duration: CMTime(value: 1, timescale: 2),
             presentationTimeStamp: CMClock.hostTimeClock.time,
             decodeTimeStamp: .invalid)
-        var sb: CMSampleBuffer?
-        guard CMSampleBufferCreateForImageBuffer(kCFAllocatorDefault, pb, true, nil, nil,
-                                                 fmt, &timing, &sb) == noErr, let sb else { return }
+        var sbBox: CMSampleBuffer?
+        let st = CMSampleBufferCreateForImageBuffer(
+            allocator: kCFAllocatorDefault,
+            imageBuffer: pb,
+            dataReady: true,
+            makeDataReadyCallback: nil,
+            refcon: nil,
+            formatDescription: fmt,
+            sampleTiming: &timing,
+            sampleBufferOut: &sbBox)
+        guard st == noErr, let sb = sbBox else { return }
         displayLayer.enqueue(sb)
     }
 }
 
-// MARK: - PiP 播放代理（协议要求的全套成员，静态值即可）
+// MARK: - PiP 播放代理
 
 extension PiPBubble: AVPictureInPictureSampleBufferPlaybackDelegate {
 
     func pictureInPictureController(_ pictureInPictureController: AVPictureInPictureController,
                                     setPlaying playing: Bool) {}
+
     func pictureInPictureControllerTimeControlDidChanged(_ pictureInPictureController: AVPictureInPictureController) {}
+
     func pictureInPictureController(_ pictureInPictureController: AVPictureInPictureController,
                                     didTransitionToRenderSize newRenderSize: CMVideoDimensions) {}
+
+    func pictureInPictureController(_ pictureInPictureController: AVPictureInPictureController,
+                                    skipByInterval skipInterval: CMTime,
+                                    completion completionHandler: @escaping () -> Void) {
+        completionHandler()
+    }
 
     var isPlaybackPaused: Bool { false }
     var timeRange: CMTimeRange { CMTimeRange(start: .zero, duration: CMTime(value: 1, timescale: 2)) }
