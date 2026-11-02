@@ -31,4 +31,10 @@ enum Config {
 
     /// 飞书应用模式的默认接收者：用户本人 open_id（配置里省略接收者时用它）
     static let feishuDefaultReceiveID = "ou_16f6a5bbf67b40482fabaca6ccf74d5d"
+
+    /// 结束速记的关键词（与 keywords.txt 里的结束词 @显示名 一致）
+    static let endWords: Set<String> = ["结束", "发送", "完毕"]
+
+    /// 速记最长秒数，超时自动结束并发送
+    static let maxDictationSeconds = 60
 }

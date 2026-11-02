@@ -20,12 +20,22 @@ final class AudioEngine: ObservableObject {
     @Published private(set) var logs: [String] = []
     @Published private(set) var wakeupCount: Int = 0
     @Published private(set) var isWakeupActive = false
+    @Published private(set) var isDictating = false
+    @Published private(set) var dictationText: String = ""
 
     // MARK: - 内部
 
     private let engine = AVAudioEngine()
     private let kws = KwsEngine()
     private var kwsReady = false
+    private let asr = AsrEngine()
+    private var asrReady = false
+    /// 速记状态的真实值（processQueue 上读写），isDictating 是它的主线程镜像
+    private var dictating = false
+    private var dictationStartedAt: TimeInterval = 0
+    private var asrLatestText = ""
+    private var asrUiTick = 0
+    private var wakeCounter = 0
     private let processQueue = DispatchQueue(label: "com.jychan.micprobe.audio", qos: .userInitiated)
 
     private let targetFormat = AVAudioFormat(commonFormat: .pcmFormatInt16,
@@ -75,6 +85,12 @@ final class AudioEngine: ObservableObject {
             UIApplication.shared.isIdleTimerDisabled = true   // 屏幕常亮
             isRunning = true
             stateText = "监听中"
+            // 若上次停止时正处速记中，重置状态
+            dictating = false
+            DispatchQueue.main.async {
+                self.isDictating = false
+                self.dictationText = ""
+            }
 
             append("已启动，输入采样率 \(Int(AVAudioSession.sharedInstance().sampleRate)) Hz")
             if uplink == nil { append("未配置上传地址，仅本地统计电平") }
@@ -89,6 +105,18 @@ final class AudioEngine: ObservableObject {
                     kwsReady = true
                     append("唤醒词引擎就绪，监听「\(Config.wakeWord)」")
                     NSLog("MPBOX: step3 kws init ok")
+                }
+            }
+            // 语音识别引擎：速记转写用，失败同样不阻塞
+            if !asrReady {
+                NSLog("MPBOX: step4 asr init begin")
+                if let err = asr.setup() {
+                    append("语音识别引擎初始化失败：\(err)")
+                    NSLog("MPBOX: step4 asr init FAIL \(err)")
+                } else {
+                    asrReady = true
+                    append("语音识别引擎就绪：说「\(Config.wakeWord)」→ 说话 →「结束/发送/完毕」发飞书")
+                    NSLog("MPBOX: step4 asr init ok")
                 }
             }
             NSLog("MPBOX: beginCapture done")
@@ -235,9 +263,19 @@ final class AudioEngine: ObservableObject {
 
         // 唤醒词检测（同在 processQueue 串行执行）
         if kwsReady, let kw = kws.feed(frame) {
-            DispatchQueue.main.async {
-                self.wakeupCount += 1
-                self.onWakeup(kw)
+            handleKeyword(kw)
+        }
+
+        // 速记转写：唤醒后把帧喂给 ASR，刷新 UI 并检查超时
+        if asrReady && dictating {
+            asrLatestText = asr.feed(frame)
+            asrUiTick += 1
+            if asrUiTick % 15 == 0 {   // ≈0.5 秒刷新一次
+                let text = asrLatestText
+                DispatchQueue.main.async { self.dictationText = text }
+            }
+            if Date().timeIntervalSince1970 - dictationStartedAt > Double(Config.maxDictationSeconds) {
+                finishDictation(reason: "超时自动发送")
             }
         }
 
@@ -253,29 +291,78 @@ final class AudioEngine: ObservableObject {
         }
     }
 
-    // MARK: - 唤醒命中
+    // MARK: - 关键词状态机（processQueue 上执行）
 
-    private func onWakeup(_ keyword: String) {
-        stateText = "听到：\(keyword)"
-        isWakeupActive = true
-        append("🔔 唤醒命中：\(keyword)（第 \(wakeupCount) 次）")
-
-        // 飞书群机器人通知
-        let fmt = DateFormatter()
-        fmt.dateFormat = "MM-dd HH:mm:ss"
-        let msg = "🔔 MicProbe 唤醒命中「\(keyword)」\n时间：\(fmt.string(from: Date()))\n第 \(wakeupCount) 次唤醒"
-        Feishu.send(text: msg) { [weak self] err in
-            if let err {
-                self?.append("飞书通知失败：\(err)")
+    private func handleKeyword(_ kw: String) {
+        if kw == Config.wakeWord {
+            if dictating {
+                append("已在速记中，忽略重复唤醒")
+                return
+            }
+            wakeCounter += 1
+            let count = wakeCounter
+            DispatchQueue.main.async { self.wakeupCount = count }
+            startDictation(count: count)
+        } else if Config.endWords.contains(kw) {
+            if dictating {
+                finishDictation(reason: "说「\(kw)」")
             } else {
-                self?.append("飞书通知已发送 ✓")
+                append("（忽略「\(kw)」：当前不在速记中）")
             }
         }
+    }
 
-        DispatchQueue.main.asyncAfter(deadline: .now() + .seconds(Config.wakeupFlashSeconds)) { [weak self] in
-            guard let self, self.isRunning else { return }
+    private func startDictation(count: Int) {
+        dictating = true
+        dictationStartedAt = Date().timeIntervalSince1970
+        asrLatestText = ""
+        asr.restart()
+
+        DispatchQueue.main.async {
+            self.isDictating = true
+            self.dictationText = ""
+            self.stateText = "🎙 速记中"
+            self.isWakeupActive = true
+            self.append("🎙 开始速记（第 \(count) 次），说「结束 / 发送 / 完毕」发送，\(Config.maxDictationSeconds) 秒自动发送")
+        }
+
+        let fmt = DateFormatter()
+        fmt.dateFormat = "MM-dd HH:mm:ss"
+        let msg = "🔔 MicProbe 唤醒「\(Config.wakeWord)」开始速记\n时间：\(fmt.string(from: Date()))\n第 \(count) 次唤醒"
+        Feishu.send(text: msg) { [weak self] err in
+            self?.append(err.map { "飞书唤醒通知失败：\($0)" } ?? "飞书唤醒通知已发送 ✓")
+        }
+    }
+
+    private func finishDictation(reason: String) {
+        guard dictating else { return }
+        dictating = false
+        let content = asrLatestText
+        asr.restart()
+        asrLatestText = ""
+
+        DispatchQueue.main.async {
+            self.isDictating = false
             self.isWakeupActive = false
             self.stateText = "监听中"
+            self.append("🎙 速记结束（\(reason)）：\(content.isEmpty ? "（未识别到内容）" : content)")
+            self.dictationText = ""
+
+            let fmt = DateFormatter()
+            fmt.dateFormat = "MM-dd HH:mm:ss"
+            let msg: String
+            if content.isEmpty {
+                msg = "🎙 MicProbe 速记结束，但未识别到内容\n时间：\(fmt.string(from: Date()))"
+            } else {
+                msg = "🎙 MicProbe 速记\n时间：\(fmt.string(from: Date()))\n——————\n\(content)"
+            }
+            Feishu.send(text: msg) { [weak self] err in
+                if let err {
+                    self?.append("飞书发送失败：\(err)")
+                } else {
+                    self?.append("飞书已发送 ✓")
+                }
+            }
         }
     }
 

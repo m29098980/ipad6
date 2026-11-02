@@ -9,6 +9,7 @@ struct ContentView: View {
             header
             statusRow
             LevelMeter(db: audio.levelDB)
+            dictationBar
             metrics
             actionButton
             webhookBar
@@ -84,6 +85,28 @@ struct ContentView: View {
         }
         .buttonStyle(.borderedProminent)
         .tint(audio.isRunning ? Color(uiColor: .systemGray) : .accentColor)
+    }
+
+    /// 速记进行中：显示实时转写文本与操作提示
+    @ViewBuilder
+    private var dictationBar: some View {
+        if audio.isDictating {
+            VStack(alignment: .leading, spacing: 8) {
+                HStack(spacing: 6) {
+                    Image(systemName: "mic.fill")
+                        .foregroundStyle(.orange)
+                    Text("速记中…说「结束 / 发送 / 完毕」发送")
+                        .font(.footnote.bold())
+                        .foregroundStyle(.orange)
+                }
+                Text(audio.dictationText.isEmpty ? "（聆听中…）" : audio.dictationText)
+                    .font(.body)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(12)
+                    .background(Color(uiColor: .secondarySystemGroupedBackground))
+                    .cornerRadius(10)
+            }
+        }
     }
 
     /// 飞书 Webhook 设置栏：粘贴群机器人地址 + 测试按钮
