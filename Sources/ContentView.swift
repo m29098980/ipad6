@@ -4,43 +4,25 @@ import UIKit
 struct ContentView: View {
     @ObservedObject var audio: AudioEngine
     @State private var webhookDraft = ""
-    @AppStorage("mini_mode") private var isMini = false
 
     var body: some View {
-        Group {
-            if isMini {
-                FloatingBubble(audio: audio) {
-                    withAnimation(.easeInOut(duration: 0.2)) { isMini = false }
-                }
-                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topTrailing)
-                .padding(.init(top: 24, leading: 0, bottom: 0, trailing: 24))
-            } else {
-                mainContent
+        mainContent
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .background(Color(uiColor: .systemGroupedBackground))
+            .onAppear {
+                webhookDraft = Feishu.webhook
+                PiPBubble.shared.onLog = { audio.logPublic($0) }
+                PiPBubble.shared.attach(audio: audio)
             }
-        }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .background(isMini ? Color.clear : Color(uiColor: .systemGroupedBackground))
-        .onAppear {
-            webhookDraft = Feishu.webhook
-            applyWindowBackground(clear: isMini)
-        }
-        .onChange(of: isMini) { applyWindowBackground(clear: $0) }
-    }
-
-    /// 悬浮球模式把窗口背景变透明，其余恢复
-    private func applyWindowBackground(clear: Bool) {
-        guard let scene = UIApplication.shared.connectedScenes.first as? UIWindowScene,
-              let win = scene.windows.first else { return }
-        win.backgroundColor = clear ? UIColor.clear : UIColor.systemGroupedBackground
     }
 
     private var mainContent: some View {
-        VStack(spacing: 26) {
+        VStack(spacing: 20) {
             HStack(alignment: .top) {
                 header
                 Spacer()
                 Button {
-                    withAnimation(.easeInOut(duration: 0.2)) { isMini = true }
+                    PiPBubble.shared.startPresentation()
                 } label: {
                     Label("悬浮球", systemImage: "record.circle")
                         .font(.footnote.weight(.medium))
@@ -51,12 +33,37 @@ struct ContentView: View {
             LevelMeter(db: audio.levelDB)
             dictationBar
             metrics
+            pipRow
             actionButton
             webhookBar
+            asrBar
             logPanel
         }
         .padding(.horizontal, 48)
-        .padding(.vertical, 32)
+        .padding(.vertical, 26)
+    }
+
+    /// 画中画悬浮窗预览与说明
+    private var pipRow: some View {
+        HStack(spacing: 14) {
+            PiPHostView()
+                .frame(width: 144, height: 81)
+                .background(Color.black)
+                .cornerRadius(8)
+                .overlay(
+                    RoundedRectangle(cornerRadius: 8)
+                        .stroke(Color(uiColor: .separator), lineWidth: 0.5)
+                )
+            VStack(alignment: .leading, spacing: 4) {
+                Text("桌面悬浮窗")
+                    .font(.subheadline.bold())
+                Text("点右上「悬浮球」，App 缩成画中画小窗浮在桌面/其他 App 上方；点小窗的展开按钮返回。")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+            Spacer()
+        }
+        .frame(maxWidth: 620)
     }
 
     // MARK: - 区块
@@ -178,6 +185,26 @@ struct ContentView: View {
         .frame(maxWidth: 620)
     }
 
+    /// 局域网转写服务自检
+    private var asrBar: some View {
+        HStack(spacing: 12) {
+            Image(systemName: "dot.radiowaves.left.and.right")
+                .foregroundStyle(.secondary)
+            Text("转写服务 \(RemoteASR.serverHost)")
+                .font(.system(size: 14))
+                .foregroundStyle(.secondary)
+            Button {
+                audio.checkASR()
+            } label: {
+                Text("网络自检")
+                    .font(.callout.bold())
+            }
+            .buttonStyle(.bordered)
+            Spacer()
+        }
+        .frame(maxWidth: 620)
+    }
+
     private var logPanel: some View {
         ScrollView {
             LazyVStack(alignment: .leading, spacing: 3) {
@@ -190,7 +217,7 @@ struct ContentView: View {
             }
             .padding(14)
         }
-        .frame(maxWidth: 620, maxHeight: 200)
+        .frame(maxWidth: 620, maxHeight: 160)
         .background(
             RoundedRectangle(cornerRadius: 12)
                 .fill(Color(uiColor: .secondarySystemGroupedBackground))
@@ -200,6 +227,12 @@ struct ContentView: View {
                 .stroke(Color(uiColor: .separator), lineWidth: 0.5)
         )
     }
+}
+
+/// 画中画视频层的宿主视图（内嵌预览）
+struct PiPHostView: UIViewRepresentable {
+    func makeUIView(context: Context) -> UIView { PiPBubble.shared.containerView() }
+    func updateUIView(_ uiView: UIView, context: Context) {}
 }
 
 /// 电平条：-60 dBFS ~ 0 dBFS 映射到 0 ~ 1 宽度

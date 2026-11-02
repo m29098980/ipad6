@@ -5,8 +5,24 @@ import Foundation
 /// "language Chinese<asr_text>" 前缀，需清理。
 enum RemoteASR {
 
-    static let endpoint = URL(string: "http://10.168.1.12:11530/v1/audio/transcriptions")!
+    static let serverHost = "10.168.1.12:11530"
+    static let endpoint = URL(string: "http://\(serverHost)/v1/audio/transcriptions")!
     static let model = "Qwen3-ASR"
+
+    /// 检测局域网转写服务连通性；结果文案直接给日志展示
+    static func check(completion: @escaping (String) -> Void) {
+        var req = URLRequest(url: URL(string: "http://\(serverHost)/v1/models")!, timeoutInterval: 8)
+        req.httpMethod = "GET"
+        URLSession.shared.dataTask(with: req) { _, resp, err in
+            if let err {
+                completion("❌ 连不上转写服务：\(err.localizedDescription)。修复：iPad 设置 → 隐私与安全性 → 本地网络 → 打开 MicProbe；并确认 Wi-Fi 与电脑同一网段")
+            } else if (resp as? HTTPURLResponse)?.statusCode == 200 {
+                completion("✅ 转写服务连通，局域网转写可用")
+            } else {
+                completion("❌ 转写服务响应异常 http=\((resp as? HTTPURLResponse)?.statusCode ?? -1)")
+            }
+        }.resume()
+    }
 
     /// 把 PCM 原声转成文字。completion 在任意线程回调：成功给清洗后的文本，失败给错误描述。
     static func transcribe(pcm: [Int16], sampleRate: Int = 16_000,

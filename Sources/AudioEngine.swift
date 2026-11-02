@@ -35,6 +35,9 @@ final class AudioEngine: ObservableObject {
     private var dictationPCM: [Int16] = []
     private var wakeCounter = 0
     private let processQueue = DispatchQueue(label: "com.jychan.micprobe.audio", qos: .userInitiated)
+    /// 端上兜底 ASR 的专用串行队列（sherpa-onnx 非线程安全）
+    private let onnxQueue = DispatchQueue(label: "com.jychan.micprobe.onnx", qos: .userInitiated)
+    private let onnxAsr = AsrEngine()
 
     private let targetFormat = AVAudioFormat(commonFormat: .pcmFormatInt16,
                                              sampleRate: Config.sampleRate,
@@ -105,8 +108,8 @@ final class AudioEngine: ObservableObject {
                     NSLog("MPBOX: step3 kws init ok")
                 }
             }
-            // 速记模式说明（原声录音，不做端上转写）
-            append("速记模式：说「\(Config.wakeWord)」开始原声录音，「结束/发送/完毕」后语音发飞书")
+            // 速记模式说明（三级转写：局域网 Qwen3-ASR → 端上模型 → 不发送）
+            append("速记模式：说「\(Config.wakeWord)」开始录音，「结束/发送/完毕」后自动转文字发飞书（失败用端上模型，再失败不发送）")
             NSLog("MPBOX: beginCapture done")
         } catch {
             // 引擎启动失败时可能已经装了 tap，必须摘掉，否则下次开始会因重复安装崩溃
@@ -329,19 +332,44 @@ final class AudioEngine: ObservableObject {
             self.append("🎙 速记结束（\(reason)），录到 \(String(format: "%.1f", durationSec)) 秒，正在转写…")
             self.dictationText = ""
 
-            // 优先本地 Qwen3-ASR 转文字发飞书；失败退回发 WAV 语音文件
+            // 三级转写策略：
+            // 1) 局域网 Qwen3-ASR（快、准）
+            // 2) 失败 → 端上自带 sherpa-onnx 模型
+            // 3) 再失败 → 不发送（不因退路发语音打扰）
             RemoteASR.transcribe(pcm: finalSamples, sampleRate: Int(Config.sampleRate)) { [weak self] result in
                 guard let self else { return }
                 let trimmed = result.trimmingCharacters(in: .whitespacesAndNewlines)
-                if !trimmed.isEmpty && !trimmed.hasPrefix("转写失败") && !trimmed.hasPrefix("没有录到音频") {
+                let remoteOK = !trimmed.isEmpty
+                    && !trimmed.hasPrefix("转写失败")
+                    && !trimmed.hasPrefix("没有录到音频")
+                if remoteOK {
                     self.append("转写结果：\(trimmed)")
                     Feishu.send(text: trimmed) { err in
                         self.append(err.map { "飞书发送失败：\($0)" } ?? "飞书文字已发送 ✓")
                     }
-                } else {
-                    self.append("\(trimmed)，改发语音文件")
-                    Feishu.sendAudio(pcm: finalSamples, sampleRate: Int(Config.sampleRate)) { err in
-                        self.append(err.map { "飞书语音发送失败：\($0)" } ?? "飞书语音已发送 ✓（\(String(format: "%.1f", durationSec)) 秒 WAV）")
+                    return
+                }
+
+                // 二级：端上自带模型（懒加载，专用串行队列）
+                self.append("局域网转写失败（\(trimmed)），改用端上模型转写…")
+                self.onnxQueue.async {
+                    if !self.onnxAsr.ready, let err = self.onnxAsr.setup() {
+                        DispatchQueue.main.async {
+                            self.append("端上模型初始化失败：\(err)，本次不发送")
+                        }
+                        return
+                    }
+                    let text = self.onnxAsr.transcribeAll(pcm: finalSamples)
+                        .trimmingCharacters(in: .whitespacesAndNewlines)
+                    DispatchQueue.main.async {
+                        if !text.isEmpty {
+                            self.append("端上转写结果：\(text)")
+                            Feishu.send(text: text) { err in
+                                self.append(err.map { "飞书发送失败：\($0)" } ?? "飞书文字已发送 ✓（端上模型）")
+                            }
+                        } else {
+                            self.append("端上转写也为空，本次不发送")
+                        }
                     }
                 }
             }
@@ -351,6 +379,14 @@ final class AudioEngine: ObservableObject {
     /// 供界面设置栏写日志（如 Webhook 测试结果）
     func logPublic(_ line: String) {
         append(line)
+    }
+
+    /// 局域网转写服务连通性自检（界面上「网络自检」按钮）
+    func checkASR() {
+        append("正在检测局域网转写服务…")
+        RemoteASR.check { [weak self] msg in
+            self?.append(msg)
+        }
     }
 
     // MARK: - 日志

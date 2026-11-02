@@ -72,4 +72,27 @@ final class AsrEngine {
         }
         return recognizer.getResult().text
     }
+
+    /// 离线整段转写：重置解码状态后整段喂入，返回最终文本。
+    /// 作为局域网 Qwen3-ASR 失败时的二级兜底。
+    func transcribeAll(pcm: [Int16]) -> String {
+        guard let recognizer, !pcm.isEmpty else { return "" }
+        recognizer.reset()
+
+        var samples = [Float]()
+        samples.reserveCapacity(pcm.count)
+        for s in pcm { samples.append(Float(s) / 32_768.0) }
+
+        // 分块喂入（1 秒一块），避免一次性大数组
+        let chunk = 16_000
+        var i = 0
+        while i < samples.count {
+            let end = min(i + chunk, samples.count)
+            recognizer.acceptWaveform(samples: Array(samples[i ..< end]))
+            while recognizer.isReady() { recognizer.decode() }
+            i = end
+        }
+        while recognizer.isReady() { recognizer.decode() }
+        return recognizer.getResult().text
+    }
 }

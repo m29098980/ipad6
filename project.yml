@@ -37,8 +37,8 @@ targets:
       properties:
         CFBundleDisplayName: MicProbe
         CFBundleName: MicProbe
-        CFBundleShortVersionString: "1.6"
-        CFBundleVersion: "10"
+        CFBundleShortVersionString: "1.7"
+        CFBundleVersion: "11"
         UILaunchScreen: {}
         UIRequiresFullScreen: true
         UIStatusBarStyle: UIStatusBarStyleDefault
