@@ -116,9 +116,8 @@ enum Feishu {
             }
             exchangeCode(code: code, appID: cfg.appID, secret: cfg.secret, log: log)
         }
-        session.presentationContextProvider = {
-            UIApplication.shared.connectedScenes
-                .compactMap { ($0 as? UIWindowScene)?.keyWindow }
+        session.presentationContextProvider = { anchor in
+            anchor.windows.first { $0.isKeyWindow }
         }
         authSession = session
         session.start()
@@ -131,13 +130,12 @@ enum Feishu {
                             "client_id": appID,
                             "client_secret": secret,
                             "code": code,
-                            "redirect_uri": redirectURI]) { result in
-            switch result {
-            case .success(let obj):
+                            "redirect_uri": redirectURI]) { obj, errMsg in
+            if let obj {
                 storeTokens(obj)
                 log("已绑定你的飞书身份 ✓ 之后消息以你本人名义发送")
-            case .failure(let msg):
-                log("换取用户 token 失败：\(msg)（请检查开放平台：重定向 URL 是否已添加 \(redirectURI)；权限是否已开通 im:message、offline_access 并发布版本）")
+            } else {
+                log("换取用户 token 失败：\(errMsg ?? "未知错误")（请检查开放平台：重定向 URL 是否已添加 \(redirectURI)；权限是否已开通 im:message、offline_access 并发布版本）")
             }
         }
     }
@@ -159,13 +157,12 @@ enum Feishu {
         tokenRequest(body: ["grant_type": "refresh_token",
                             "client_id": appID,
                             "client_secret": secret,
-                            "refresh_token": refresh]) { result in
-            switch result {
-            case .success(let obj):
+                            "refresh_token": refresh]) { obj, errMsg in
+            if let obj {
                 storeTokens(obj)
                 completion(nil, obj["access_token"] as? String)
-            case .failure(let msg):
-                completion("刷新用户 token 失败：\(msg)", nil)
+            } else {
+                completion("刷新用户 token 失败：\(errMsg ?? "未知错误")", nil)
             }
         }
     }
@@ -206,11 +203,11 @@ enum Feishu {
         }
     }
 
-    /// 调用 v2 oauth/token 接口
+    /// 调用 v2 oauth/token 接口。completion 参数：成功给响应字典，失败给错误描述。
     private static func tokenRequest(body: [String: Any],
-                                     completion: @escaping (Result<[String: Any], String>) -> Void) {
+                                     completion: @escaping ([String: Any]?, String?) -> Void) {
         guard let url = URL(string: "https://open.feishu.cn/open-apis/authen/v2/oauth/token") else {
-            completion(.failure("URL 错误"))
+            completion(nil, "URL 错误")
             return
         }
         var req = URLRequest(url: url, timeoutInterval: 15)
@@ -219,23 +216,23 @@ enum Feishu {
         req.httpBody = try? JSONSerialization.data(withJSONObject: body)
         URLSession.shared.dataTask(with: req) { data, _, err in
             if let err {
-                completion(.failure("网络错误 \(err.localizedDescription)"))
+                completion(nil, "网络错误 \(err.localizedDescription)")
                 return
             }
             guard let data,
                   let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
-                completion(.failure("响应解析失败"))
+                completion(nil, "响应解析失败")
                 return
             }
             if let code = obj["code"] as? Int, code != 0 {
-                completion(.failure("code=\(code) \(obj["msg"] as? String ?? "")"))
+                completion(nil, "code=\(code) \(obj["msg"] as? String ?? "")")
                 return
             }
-            guard let at = obj["access_token"] as? String else {
-                completion(.failure("缺少 access_token：\(obj["msg"] as? String ?? "")"))
+            guard obj["access_token"] is String else {
+                completion(nil, "缺少 access_token：\(obj["msg"] as? String ?? "")")
                 return
             }
-            completion(.success(obj))
+            completion(obj, nil)
         }.resume()
     }
 
