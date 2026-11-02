@@ -4,6 +4,8 @@ import UIKit
 struct ContentView: View {
     @ObservedObject var audio: AudioEngine
     @State private var webhookDraft = ""
+    @State private var showCodeAlert = false
+    @State private var codeDraft = ""
 
     var body: some View {
         mainContent
@@ -213,6 +215,23 @@ struct ContentView: View {
                         .font(.callout.bold())
                 }
                 .buttonStyle(.borderedProminent)
+                Button {
+                    codeDraft = ""
+                    showCodeAlert = true
+                } label: {
+                    Text("粘贴授权码")
+                        .font(.callout.bold())
+                }
+                .buttonStyle(.bordered)
+                .alert("粘贴授权码", isPresented: $showCodeAlert) {
+                    TextField("浏览器地址栏里的 code=…", text: $codeDraft)
+                    Button("绑定") {
+                        Feishu.bindWithCode(codeDraft) { line in audio.logPublic(line) }
+                    }
+                    Button("取消", role: .cancel) {}
+                } message: {
+                    Text("授权页登录后若浏览器报「无法连接」，从地址栏复制 code= 后面那串字符粘到这里")
+                }
             }
             Spacer()
         }

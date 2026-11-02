@@ -1,5 +1,6 @@
 import Foundation
-import AuthenticationServices
+import Network
+import UIKit
 
 /// 飞书通知，支持两种配置（在设置栏粘贴后自动识别）：
 /// 1. Webhook 模式：粘贴群自定义机器人的 https://open.feishu.cn/open-apis/bot/v2/hook/... 地址
@@ -22,8 +23,10 @@ enum Feishu {
     private static let userRefreshKey = "feishu_user_refresh"
     private static let userRefreshExpKey = "feishu_user_refresh_exp"
 
-    /// OAuth 重定向地址（需与开放平台「安全设置 → 重定向 URL」完全一致）
-    static let redirectURI = "micprobe://auth"
+    /// OAuth 重定向地址（需与开放平台「安全设置 → 重定向 URL」完全一致）。
+    /// 飞书控制台不收自定义 scheme（报「参数不合法」），所以用本机回环地址：
+    /// App 在 127.0.0.1:8766 起临时 HTTP 监听接授权回调，回环不触发本地网络权限。
+    static let redirectURI = "http://127.0.0.1:8766/callback"
     /// 授权 scope：发消息 + 离线访问（换取 refresh_token 长期续期）
     static let oauthScopes = "im:message offline_access"
 
@@ -77,65 +80,93 @@ enum Feishu {
 
     // MARK: - 用户身份（OAuth user_access_token）
 
-    private static var authSession: ASWebAuthenticationSession?
-    /// 持有锚点对象，防止授权期间被释放
-    private static var authAnchor: AuthAnchor?
+    private static var authListener: NWListener?
 
-    /// 授权页展示锚点：返回 keyWindow 作为弹出容器
-    private final class AuthAnchor: NSObject, ASWebAuthenticationPresentationContextProviding {
-        weak var window: UIWindow?
-        init(window: UIWindow) { self.window = window }
-        func presentationAnchor(for session: ASWebAuthenticationSession) -> ASPresentationAnchor {
-            window ?? ASPresentationAnchor()
+    /// 起本机回环 HTTP 监听接授权回调
+    private static func startAuthListener(appID: String, secret: String,
+                                          log: @escaping (String) -> Void) -> Bool {
+        stopAuthListener()
+        guard let listener = try? NWListener(using: .tcp, on: 8766) else { return false }
+        listener.newConnectionHandler = { conn in
+            conn.start(queue: DispatchQueue(label: "micprobe.auth"))
+            conn.receive(minimumIncompleteLength: 1, maximumLength: 16_384) { _, data, _, _ in
+                defer { conn.cancel() }
+                guard let data else { return }
+                let head = String(decoding: data.prefix(4096), as: UTF8.self)
+                guard let line = head.split(separator: "\r\n").first else { return }
+                let parts = line.split(separator: " ")
+                guard parts.count >= 2,
+                      let url = URL(string: "http://127.0.0.1" + parts[1]),
+                      let comps = URLComponents(url: url, resolvingAgainstBaseURL: false) else { return }
+                if comps.queryItems?.first(where: { $0.name == "error" }) != nil {
+                    DispatchQueue.main.async { log("用户拒绝了授权") }
+                    return
+                }
+                guard let code = comps.queryItems?.first(where: { $0.name == "code" })?.value else { return }
+                // 给浏览器回一个成功提示页
+                let body = "<html><meta charset='utf-8'><body style='font-family:-apple-system;text-align:center;padding-top:90px'><h2>✅ 授权成功</h2><p>请切回 MicProbe，绑定将自动完成。</p></body></html>"
+                let resp = "HTTP/1.1 200 OK\r\nContent-Type: text/html; charset=utf-8\r\nContent-Length: \(body.utf8.count)\r\nConnection: close\r\n\r\n\(body)"
+                conn.send(content: resp.data(using: .utf8),
+                          completion: .contentProcessed { _ in conn.cancel() })
+                DispatchQueue.main.async {
+                    stopAuthListener()
+                    exchangeCode(code: code, appID: appID, secret: secret, log: log)
+                }
+            }
         }
+        listener.start(queue: DispatchQueue(label: "micprobe.auth.listen"))
+        authListener = listener
+        return true
     }
 
-    /// 打开飞书授权页，引导用户登录并授权，回调后自动换取并保存 token。
+    private static func stopAuthListener() {
+        authListener?.cancel()
+        authListener = nil
+    }
+
+    /// 构造授权页 URL
+    static func authorizeURL(appID: String) -> URL? {
+        var comps = URLComponents(string: "https://accounts.feishu.cn/open-apis/authen/v1/authorize")!
+        comps.queryItems = [
+            URLQueryItem(name: "client_id", value: appID),
+            URLQueryItem(name: "redirect_uri", value: redirectURI),
+            URLQueryItem(name: "response_type", value: "code"),
+            URLQueryItem(name: "scope", value: oauthScopes),
+            URLQueryItem(name: "state", value: "micprobe\(Int(Date().timeIntervalSince1970))")
+        ]
+        return comps.url
+    }
+
+    /// 打开飞书授权页（Safari），授权后重定向回本机 127.0.0.1:8766 自动完成绑定。
     static func startUserAuth(log: @escaping (String) -> Void) {
         guard let cfg = parseAppConfig(webhook) else {
             log("绑定身份前请先在下方粘贴 AppID,AppSecret")
             return
         }
-        var comps = URLComponents(string: "https://accounts.feishu.cn/open-apis/authen/v1/authorize")!
-        let state = "micprobe\(Int(Date().timeIntervalSince1970))"
-        comps.queryItems = [
-            URLQueryItem(name: "client_id", value: cfg.appID),
-            URLQueryItem(name: "redirect_uri", value: redirectURI),
-            URLQueryItem(name: "response_type", value: "code"),
-            URLQueryItem(name: "scope", value: oauthScopes),
-            URLQueryItem(name: "state", value: state)
-        ]
-        guard let url = comps.url else {
+        guard let url = authorizeURL(appID: cfg.appID) else {
             log("构造授权 URL 失败")
             return
         }
-        log("正在打开飞书授权页…请登录并点「同意授权」")
-        let session = ASWebAuthenticationSession(url: url, callbackURLScheme: "micprobe") { callbackURL, error in
-            if let error {
-                log("授权未完成：\(error.localizedDescription)")
-                return
-            }
-            guard let cb = callbackURL,
-                  let cp = URLComponents(url: cb, resolvingAgainstBaseURL: false),
-                  let code = cp.queryItems?.first(where: { $0.name == "code" })?.value else {
-                log("授权回调缺少 code：\(callbackURL?.absoluteString.prefix(120) ?? "nil")")
-                return
-            }
-            if cp.queryItems?.first(where: { $0.name == "error" })?.value != nil {
-                log("用户拒绝了授权")
-                return
-            }
-            exchangeCode(code: code, appID: cfg.appID, secret: cfg.secret, log: log)
+        if startAuthListener(appID: cfg.appID, secret: cfg.secret, log: log) {
+            log("正在打开飞书授权页…登录并点「同意授权」，成功后自动完成绑定")
+        } else {
+            log("正在打开飞书授权页…（本机监听启动失败：授权后请从浏览器地址栏复制 code，用「粘贴授权码」完成绑定）")
         }
-        // presentationContextProvider 需要自定义对象实现协议（UIKit 类型未隐式实现）
-        if let scene = UIApplication.shared.connectedScenes.first as? UIWindowScene,
-           let win = scene.keyWindow {
-            let anchor = AuthAnchor(window: win)
-            authAnchor = anchor
-            session.presentationContextProvider = anchor
+        UIApplication.shared.open(url)
+    }
+
+    /// 手动兜底：把浏览器地址栏里的授权码粘进来完成绑定
+    static func bindWithCode(_ raw: String, log: @escaping (String) -> Void) {
+        guard let cfg = parseAppConfig(webhook) else {
+            log("绑定身份前请先在下方粘贴 AppID,AppSecret")
+            return
         }
-        authSession = session
-        session.start()
+        let code = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !code.isEmpty else {
+            log("授权码为空")
+            return
+        }
+        exchangeCode(code: code, appID: cfg.appID, secret: cfg.secret, log: log)
     }
 
     /// 授权码换 user_access_token + refresh_token（v2 接口，JSON 请求体）
