@@ -22,6 +22,8 @@ final class AudioEngine: ObservableObject {
     @Published private(set) var isWakeupActive = false
     @Published private(set) var isDictating = false
     @Published private(set) var dictationText: String = ""
+    /// 速记开始时间（悬浮窗显示已录秒数用）
+    @Published private(set) var dictationStartedDate: Date?
 
     // MARK: - 内部
 
@@ -106,7 +108,7 @@ final class AudioEngine: ObservableObject {
                 }
             }
             // 速记模式说明（两级发送：局域网 Qwen3-ASR 文字 → 失败发语音消息）
-            append("速记模式：说「\(Config.wakeWord)」开始录音，「结束/发送/完毕」后转文字发飞书，失败自动改发语音消息")
+            append("速记模式：说「\(Config.wakeWord)」开始录音，「结束」或「发送完毕」后转文字发飞书，失败改发语音消息")
             NSLog("MPBOX: beginCapture done")
         } catch {
             // 引擎启动失败时可能已经装了 tap，必须摘掉，否则下次开始会因重复安装崩溃
@@ -305,7 +307,9 @@ final class AudioEngine: ObservableObject {
             self.dictationText = ""
             self.stateText = "🎙 速记中"
             self.isWakeupActive = true
-            self.append("🎙 开始速记（第 \(count) 次），原声录音中。说「结束 / 发送 / 完毕」发送，\(Config.maxDictationSeconds) 秒自动发送")
+            self.dictationStartedDate = Date()
+            FeedbackSound.wake()   // 听觉确认：唤醒成功
+            self.append("🎙 开始速记（第 \(count) 次），原声录音中。说「结束」或「发送完毕」发送，\(Config.maxDictationSeconds) 秒自动发送")
         }
     }
 
@@ -325,7 +329,9 @@ final class AudioEngine: ObservableObject {
         DispatchQueue.main.async {
             self.isDictating = false
             self.isWakeupActive = false
+            self.dictationStartedDate = nil
             self.stateText = "监听中"
+            FeedbackSound.success()   // 听觉确认：录音已结束
             self.append("🎙 速记结束（\(reason)），录到 \(String(format: "%.1f", durationSec)) 秒，正在转写…")
             self.dictationText = ""
 
@@ -341,7 +347,13 @@ final class AudioEngine: ObservableObject {
                 if remoteOK {
                     self.append("转写结果：\(trimmed)")
                     Feishu.send(text: trimmed) { err in
-                        self.append(err.map { "飞书发送失败：\($0)" } ?? "飞书文字已发送 ✓")
+                        if let err {
+                            FeedbackSound.failure()
+                            self.append("飞书发送失败：\(err)")
+                        } else {
+                            FeedbackSound.success()
+                            self.append("飞书文字已发送 ✓")
+                        }
                     }
                     return
                 }
@@ -363,10 +375,16 @@ final class AudioEngine: ObservableObject {
             guard let self else { return }
             if let ogg {
                 Feishu.sendVoice(ogg: ogg, durationMS: Int(durationSec * 1000)) { err in
-                    self.append(err.map { "飞书语音发送失败：\($0)" }
-                                ?? "飞书语音消息已发送 ✓（\(String(format: "%.1f", durationSec)) 秒）")
+                    if let err {
+                        FeedbackSound.failure()
+                        self.append("飞书语音发送失败：\(err)")
+                    } else {
+                        FeedbackSound.success()
+                        self.append("飞书语音消息已发送 ✓（\(String(format: "%.1f", durationSec)) 秒）")
+                    }
                 }
             } else {
+                FeedbackSound.failure()
                 self.append("Opus 编码失败：\(encErr ?? "未知")，本次不发送")
             }
         }

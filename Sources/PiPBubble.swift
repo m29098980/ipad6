@@ -127,37 +127,83 @@ final class PiPBubble: NSObject {
 
     // MARK: - 帧渲染
 
-    private func statusInfo() -> (String, UIColor) {
-        guard let a = audio else { return ("已停止", .systemGray) }
-        if a.isDictating || a.isWakeupActive { return ("速记中", .orange) }
-        return a.isRunning ? ("监听中", .green) : ("已停止", .systemGray)
+    private var tick = 0
+
+    private func statusInfo() -> (String, UIColor, Bool) {
+        // 返回 (标题, 主题色, 是否速记状态)
+        guard let a = audio else { return ("已停止", .systemGray, false) }
+        if a.isDictating || a.isWakeupActive { return ("速记中", .orange, true) }
+        return a.isRunning ? ("监听中", .green, false) : ("已停止", .systemGray, false)
     }
 
     private func renderNow() {
-        let (label, color) = statusInfo()
+        tick += 1
+        let (label, color, active) = statusInfo()
+        let pulse = (tick / 2) % 2 == 0   // 每 1 秒明暗交替，闪烁提示
+
+        // 速记已录秒数
+        var elapsed = -1
+        if active, let start = audio?.dictationStartedDate {
+            elapsed = Int(Date().timeIntervalSince(start))
+        }
 
         let size = CGSize(width: frameW, height: frameH)
         let renderer = UIGraphicsImageRenderer(size: size)
         let img = renderer.image { c in
-            // 深色底
-            UIColor(red: 0.10, green: 0.10, blue: 0.12, alpha: 1).setFill()
-            c.fill(CGRect(origin: .zero, size: size))
-            // 状态圆点
+            let full = CGRect(origin: .zero, size: size)
+
+            // 底色：速记=亮橙（远处一眼可见）；监听=深色
+            if active {
+                UIColor.orange.setFill()
+                c.fill(full)
+            } else {
+                UIColor(red: 0.08, green: 0.09, blue: 0.11, alpha: 1).setFill()
+                c.fill(full)
+            }
+
+            // 高亮边框环：让小窗在任何壁纸上都醒目
+            c.cgContext.setStrokeColor(active
+                ? UIColor.white.cgColor
+                : color.withAlphaComponent(pulse ? 1.0 : 0.35).cgColor)
+            c.cgContext.setLineWidth(10)
+            c.cgContext.stroke(full.insetBy(dx: 5, dy: 5))
+
+            // 状态圆点（速记时做脉冲缩放）
+            let dotR: CGFloat = active ? (pulse ? 30 : 22) : (pulse ? 26 : 20)
             color.setFill()
-            c.cgContext.fillEllipse(in: CGRect(x: 56, y: frameH / 2 - 24, width: 48, height: 48))
-            // 状态文字
+            c.cgContext.fillEllipse(in: CGRect(x: 52 - dotR / 2 + 24,
+                                               y: frameH / 2 - dotR / 2,
+                                               width: dotR, height: dotR))
+
+            // 主标题
             let attrs: [NSAttributedString.Key: Any] = [
-                .font: UIFont.systemFont(ofSize: 54, weight: .semibold),
-                .foregroundColor: UIColor.white
+                .font: UIFont.systemFont(ofSize: 56, weight: .bold),
+                .foregroundColor: active ? UIColor.white : UIColor.white
             ]
-            (label as NSString).draw(at: CGPoint(x: 130, y: frameH / 2 - 34), withAttributes: attrs)
+            (label as NSString).draw(at: CGPoint(x: 118, y: frameH / 2 - 62), withAttributes: attrs)
+
+            // 副行：速记时显示录音秒数（跳动），监听时显示唤醒词提示
+            let sub: String
+            if active {
+                sub = "● REC \(elapsed)s"
+            } else {
+                sub = "「85号」唤醒"
+            }
+            let subAttrs: [NSAttributedString.Key: Any] = [
+                .font: UIFont.monospacedDigitSystemFont(ofSize: 34, weight: .semibold),
+                .foregroundColor: active
+                    ? (pulse ? UIColor.white : UIColor(white: 1, alpha: 0.75))
+                    : UIColor(white: 1, alpha: 0.6)
+            ]
+            (sub as NSString).draw(at: CGPoint(x: 118, y: frameH / 2 + 8), withAttributes: subAttrs)
+
             // 底部提示小字
             let tip: [NSAttributedString.Key: Any] = [
-                .font: UIFont.systemFont(ofSize: 22, weight: .regular),
-                .foregroundColor: UIColor(white: 1, alpha: 0.55)
+                .font: UIFont.systemFont(ofSize: 20, weight: .regular),
+                .foregroundColor: UIColor(white: 1, alpha: 0.5)
             ]
-            ("「85号」开始 ·「结束/发送完毕」发送" as NSString)
-                .draw(at: CGPoint(x: 56, y: frameH - 46), withAttributes: tip)
+            ("说「结束」或「发送完毕」发送" as NSString)
+                .draw(at: CGPoint(x: 56, y: frameH - 42), withAttributes: tip)
         }
         guard let cg = img.cgImage else { return }
 
