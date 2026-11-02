@@ -153,7 +153,7 @@ final class PiPBubble: NSObject {
             self.drawBackground(c, active: active)
             self.drawBorder(c, color: color, active: active, pulse: pulse)
             self.drawDot(c, color: color, active: active, pulse: pulse)
-            self.drawLabel(c, label: label, sub: active ? "● REC \(elapsed)s" : "「85号」唤醒",
+            self.drawLabel(c, label: label, sub: active ? "● REC \(elapsed)s" : "「Arqos」唤醒",
                            active: active, pulse: pulse)
             self.drawTip(c)
         }
