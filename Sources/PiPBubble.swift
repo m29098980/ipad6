@@ -150,60 +150,12 @@ final class PiPBubble: NSObject {
         let size = CGSize(width: frameW, height: frameH)
         let renderer = UIGraphicsImageRenderer(size: size)
         let img = renderer.image { c in
-            let full = CGRect(origin: .zero, size: size)
-
-            // 底色：速记=亮橙（远处一眼可见）；监听=深色
-            if active {
-                UIColor.orange.setFill()
-                c.fill(full)
-            } else {
-                UIColor(red: 0.08, green: 0.09, blue: 0.11, alpha: 1).setFill()
-                c.fill(full)
-            }
-
-            // 高亮边框环：让小窗在任何壁纸上都醒目
-            c.cgContext.setStrokeColor(active
-                ? UIColor.white.cgColor
-                : color.withAlphaComponent(pulse ? 1.0 : 0.35).cgColor)
-            c.cgContext.setLineWidth(10)
-            c.cgContext.stroke(full.insetBy(dx: 5, dy: 5))
-
-            // 状态圆点（速记时做脉冲缩放）
-            let dotR: CGFloat = active ? (pulse ? 30 : 22) : (pulse ? 26 : 20)
-            color.setFill()
-            c.cgContext.fillEllipse(in: CGRect(x: 52 - dotR / 2 + 24,
-                                               y: frameH / 2 - dotR / 2,
-                                               width: dotR, height: dotR))
-
-            // 主标题
-            let attrs: [NSAttributedString.Key: Any] = [
-                .font: UIFont.systemFont(ofSize: 56, weight: .bold),
-                .foregroundColor: active ? UIColor.white : UIColor.white
-            ]
-            (label as NSString).draw(at: CGPoint(x: 118, y: frameH / 2 - 62), withAttributes: attrs)
-
-            // 副行：速记时显示录音秒数（跳动），监听时显示唤醒词提示
-            let sub: String
-            if active {
-                sub = "● REC \(elapsed)s"
-            } else {
-                sub = "「85号」唤醒"
-            }
-            let subAttrs: [NSAttributedString.Key: Any] = [
-                .font: UIFont.monospacedDigitSystemFont(ofSize: 34, weight: .semibold),
-                .foregroundColor: active
-                    ? (pulse ? UIColor.white : UIColor(white: 1, alpha: 0.75))
-                    : UIColor(white: 1, alpha: 0.6)
-            ]
-            (sub as NSString).draw(at: CGPoint(x: 118, y: frameH / 2 + 8), withAttributes: subAttrs)
-
-            // 底部提示小字
-            let tip: [NSAttributedString.Key: Any] = [
-                .font: UIFont.systemFont(ofSize: 20, weight: .regular),
-                .foregroundColor: UIColor(white: 1, alpha: 0.5)
-            ]
-            ("说「结束」或「发送完毕」发送" as NSString)
-                .draw(at: CGPoint(x: 56, y: frameH - 42), withAttributes: tip)
+            self.drawBackground(c, active: active)
+            self.drawBorder(c, color: color, active: active, pulse: pulse)
+            self.drawDot(c, color: color, active: active, pulse: pulse)
+            self.drawLabel(c, label: label, sub: active ? "● REC \(elapsed)s" : "「85号」唤醒",
+                           active: active, pulse: pulse)
+            self.drawTip(c)
         }
         guard let cg = img.cgImage else { return }
 
@@ -255,6 +207,69 @@ final class PiPBubble: NSObject {
             sampleBufferOut: &sbBox)
         guard st == noErr, let sb = sbBox else { return }
         displayLayer.enqueue(sb)
+    }
+
+    // MARK: - 绘制子步骤（拆小函数避免编译器类型检查超时）
+
+    private func drawBackground(_ c: UIGraphicsImageRendererContext, active: Bool) {
+        let full = CGRect(x: 0, y: 0, width: frameW, height: frameH)
+        if active {
+            UIColor.orange.setFill()
+        } else {
+            UIColor(red: 0.08, green: 0.09, blue: 0.11, alpha: 1).setFill()
+        }
+        c.fill(full)
+    }
+
+    private func drawBorder(_ c: UIGraphicsImageRendererContext, color: UIColor,
+                            active: Bool, pulse: Bool) {
+        let full = CGRect(x: 0, y: 0, width: frameW, height: frameH)
+        let strokeColor: UIColor = active ? .white : color.withAlphaComponent(pulse ? 1.0 : 0.35)
+        c.cgContext.setStrokeColor(strokeColor.cgColor)
+        c.cgContext.setLineWidth(10)
+        c.cgContext.stroke(full.insetBy(dx: 5, dy: 5))
+    }
+
+    private func drawDot(_ c: UIGraphicsImageRendererContext, color: UIColor,
+                         active: Bool, pulse: Bool) {
+        var radius: CGFloat = 22
+        if pulse { radius = active ? 30 : 26 }
+        let x: CGFloat = 76 - radius / 2
+        let y = CGFloat(frameH) / 2 - radius / 2
+        color.setFill()
+        c.cgContext.fillEllipse(in: CGRect(x: x, y: y, width: radius, height: radius))
+    }
+
+    private func drawLabel(_ c: UIGraphicsImageRendererContext, label: String, sub: String,
+                           active: Bool, pulse: Bool) {
+        let titleAttrs: [NSAttributedString.Key: Any] = [
+            .font: UIFont.systemFont(ofSize: 56, weight: .bold),
+            .foregroundColor: UIColor.white
+        ]
+        (label as NSString).draw(at: CGPoint(x: 118, y: CGFloat(frameH) / 2 - 62),
+                                 withAttributes: titleAttrs)
+
+        let subColor: UIColor
+        if active {
+            subColor = pulse ? .white : UIColor(white: 1, alpha: 0.75)
+        } else {
+            subColor = UIColor(white: 1, alpha: 0.6)
+        }
+        let subAttrs: [NSAttributedString.Key: Any] = [
+            .font: UIFont.monospacedDigitSystemFont(ofSize: 34, weight: .semibold),
+            .foregroundColor: subColor
+        ]
+        (sub as NSString).draw(at: CGPoint(x: 118, y: CGFloat(frameH) / 2 + 8),
+                               withAttributes: subAttrs)
+    }
+
+    private func drawTip(_ c: UIGraphicsImageRendererContext) {
+        let tipAttrs: [NSAttributedString.Key: Any] = [
+            .font: UIFont.systemFont(ofSize: 20, weight: .regular),
+            .foregroundColor: UIColor(white: 1, alpha: 0.5)
+        ]
+        ("说「结束」或「发送完毕」发送" as NSString)
+            .draw(at: CGPoint(x: 56, y: CGFloat(frameH) - 42), withAttributes: tipAttrs)
     }
 }
 
