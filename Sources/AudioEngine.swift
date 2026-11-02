@@ -325,19 +325,26 @@ final class AudioEngine: ObservableObject {
             self.isWakeupActive = true
             self.append("🎙 开始速记（第 \(count) 次），说「结束 / 发送 / 完毕」发送，\(Config.maxDictationSeconds) 秒自动发送")
         }
+    }
 
-        let fmt = DateFormatter()
-        fmt.dateFormat = "MM-dd HH:mm:ss"
-        let msg = "🔔 MicProbe 唤醒「\(Config.wakeWord)」开始速记\n时间：\(fmt.string(from: Date()))\n第 \(count) 次唤醒"
-        Feishu.send(text: msg) { [weak self] err in
-            self?.append(err.map { "飞书唤醒通知失败：\($0)" } ?? "飞书唤醒通知已发送 ✓")
+    /// 去掉识别文本尾部被一并转写进去的结束语（可能带空白，且可能连续出现）
+    private func stripEndWords(_ raw: String) -> String {
+        var t = raw
+        let words = Config.endWords.sorted { $0.count > $1.count }
+        while true {
+            let trimmed = t.trimmingCharacters(in: .whitespacesAndNewlines)
+            if let w = words.first(where: { trimmed.hasSuffix($0) }) {
+                t = String(trimmed.dropLast(w.count))
+            } else {
+                return trimmed
+            }
         }
     }
 
     private func finishDictation(reason: String) {
         guard dictating else { return }
         dictating = false
-        let content = asrLatestText
+        let content = stripEndWords(asrLatestText)
         asr.restart()
         asrLatestText = ""
 
@@ -348,15 +355,9 @@ final class AudioEngine: ObservableObject {
             self.append("🎙 速记结束（\(reason)）：\(content.isEmpty ? "（未识别到内容）" : content)")
             self.dictationText = ""
 
-            let fmt = DateFormatter()
-            fmt.dateFormat = "MM-dd HH:mm:ss"
-            let msg: String
-            if content.isEmpty {
-                msg = "🎙 MicProbe 速记结束，但未识别到内容\n时间：\(fmt.string(from: Date()))"
-            } else {
-                msg = "🎙 MicProbe 速记\n时间：\(fmt.string(from: Date()))\n——————\n\(content)"
-            }
-            Feishu.send(text: msg) { [weak self] err in
+            // 只发送内容本身；没识别到内容不发，避免打扰
+            guard !content.isEmpty else { return }
+            Feishu.send(text: content) { [weak self] err in
                 if let err {
                     self?.append("飞书发送失败：\(err)")
                 } else {
