@@ -36,6 +36,7 @@ struct ContentView: View {
             pipRow
             actionButton
             webhookBar
+            identityBar
             asrBar
             logPanel
         }
@@ -181,6 +182,39 @@ struct ContentView: View {
                     .font(.callout.bold())
             }
             .buttonStyle(.bordered)
+        }
+        .frame(maxWidth: 620)
+    }
+
+    /// 发送身份：绑定后消息以用户本人名义发出（对方机器人事件才会受理）
+    private var identityBar: some View {
+        HStack(spacing: 12) {
+            Image(systemName: Feishu.userTokenBound ? "person.fill.checkmark" : "person.crop.circle.badge.questionmark")
+                .foregroundStyle(Feishu.userTokenBound ? Color.green : .secondary)
+            Text(Feishu.userTokenBound
+                 ? "发送身份：我本人 ✓（消息以你的名义发出）"
+                 : "发送身份：机器人（下游不受理，建议绑定）")
+                .font(.system(size: 14))
+                .foregroundStyle(.secondary)
+            if Feishu.userTokenBound {
+                Button {
+                    Feishu.unbindUser()
+                    audio.logPublic("已解绑用户身份，恢复机器人名义发送")
+                } label: {
+                    Text("解绑")
+                        .font(.callout.bold())
+                }
+                .buttonStyle(.bordered)
+            } else {
+                Button {
+                    Feishu.startUserAuth { line in audio.logPublic(line) }
+                } label: {
+                    Text("绑定我的身份")
+                        .font(.callout.bold())
+                }
+                .buttonStyle(.borderedProminent)
+            }
+            Spacer()
         }
         .frame(maxWidth: 620)
     }

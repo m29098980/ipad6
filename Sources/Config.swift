@@ -32,6 +32,10 @@ enum Config {
     /// 飞书应用模式的默认接收者：用户本人 open_id（配置里省略接收者时用它）
     static let feishuDefaultReceiveID = "ou_16f6a5bbf67b40482fabaca6ccf74d5d"
 
+    /// 用户↔机器人单聊的 chat_id（以用户身份发消息时的目标会话）。
+    /// 来源：机器人以 tenant token 发消息时响应体里的 data.chat_id。
+    static let feishuP2PChatID = "oc_febb61fceef7bbb6c6ee6e0f7d9e53ea"
+
     /// 结束速记的关键词（与 keywords.txt 里的结束词 @显示名 一致）
     /// 「发送」「完毕」单独词太容易在日常话语里误触发，改用四字词组「发送完毕」
     static let endWords: Set<String> = ["结束", "发送完毕"]

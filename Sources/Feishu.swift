@@ -1,16 +1,47 @@
 import Foundation
+import AuthenticationServices
 
 /// 飞书通知，支持两种配置（在设置栏粘贴后自动识别）：
 /// 1. Webhook 模式：粘贴群自定义机器人的 https://open.feishu.cn/open-apis/bot/v2/hook/... 地址
 /// 2. 应用模式：粘贴 "AppID,AppSecret[,接收者ID]"
 ///    - 接收者 ou_ 开头 = 机器人私聊发给该用户；oc_ 开头 = 发到该群
 ///    - 省略接收者时，发给 Config.feishuDefaultReceiveID
-///    - 通过开放平台 API 以机器人本人名义发消息
+///    - 通过开放平台 API 发消息
+/// 3. 用户身份（OAuth user_access_token）：
+///    - 绑定后消息以「用户本人」名义发到与机器人的单聊（对方的事件回调才会受理）
+///    - 机器人自己发的消息不会推给它自己的事件订阅，所以必须用用户身份
 enum Feishu {
 
     static let defaultsKey = "feishu_webhook"
     private static let tokenKey = "feishu_tenant_token"
     private static let tokenExpKey = "feishu_token_expire"
+
+    // ---- 用户身份（OAuth）存储键 ----
+    private static let userTokenKey = "feishu_user_token"
+    private static let userTokenExpKey = "feishu_user_token_exp"
+    private static let userRefreshKey = "feishu_user_refresh"
+    private static let userRefreshExpKey = "feishu_user_refresh_exp"
+
+    /// OAuth 重定向地址（需与开放平台「安全设置 → 重定向 URL」完全一致）
+    static let redirectURI = "micprobe://auth"
+    /// 授权 scope：发消息 + 离线访问（换取 refresh_token 长期续期）
+    static let oauthScopes = "im:message offline_access"
+
+    /// 是否已绑定用户身份（有未过期的 refresh_token 即视为已绑定）
+    static var userTokenBound: Bool {
+        let ud = UserDefaults.standard
+        let refresh = ud.string(forKey: userRefreshKey) ?? ""
+        let exp = ud.double(forKey: userRefreshExpKey)
+        return !refresh.isEmpty && Date().timeIntervalSince1970 < exp
+    }
+
+    /// 解绑用户身份，恢复机器人名义发送
+    static func unbindUser() {
+        let ud = UserDefaults.standard
+        for k in [userTokenKey, userTokenExpKey, userRefreshKey, userRefreshExpKey] {
+            ud.removeObject(forKey: k)
+        }
+    }
 
     static var webhook: String {
         (UserDefaults.standard.string(forKey: defaultsKey) ?? "")
@@ -25,7 +56,13 @@ enum Feishu {
     // MARK: - 发送入口
 
     /// 发送文本消息。completion 在主线程回调：参数为 nil 表示成功，否则为错误描述。
+    /// 已绑定用户身份 → 以用户本人名义发到与机器人的单聊；
+    /// 未绑定 → 按配置走机器人/webhook。
     static func send(text: String, completion: @escaping (String?) -> Void) {
+        if userTokenBound {
+            sendAsUser(text: text, completion: completion)
+            return
+        }
         let raw = webhook
         if raw.contains("open-apis/bot/v2/hook") {
             sendWebhook(raw, text: text, completion: completion)
@@ -35,6 +72,183 @@ enum Feishu {
             completion("配置为空：请粘贴 Webhook 地址或 AppID,AppSecret")
         } else {
             completion("无法识别的配置格式（应为 Webhook 地址或 cli_ 开头的 AppID,AppSecret）")
+        }
+    }
+
+    // MARK: - 用户身份（OAuth user_access_token）
+
+    private static var authSession: ASWebAuthenticationSession?
+
+    /// 打开飞书授权页，引导用户登录并授权，回调后自动换取并保存 token。
+    static func startUserAuth(log: @escaping (String) -> Void) {
+        guard let cfg = parseAppConfig(webhook) else {
+            log("绑定身份前请先在下方粘贴 AppID,AppSecret")
+            return
+        }
+        var comps = URLComponents(string: "https://accounts.feishu.cn/open-apis/authen/v1/authorize")!
+        let state = "micprobe\(Int(Date().timeIntervalSince1970))"
+        comps.queryItems = [
+            URLQueryItem(name: "client_id", value: cfg.appID),
+            URLQueryItem(name: "redirect_uri", value: redirectURI),
+            URLQueryItem(name: "response_type", value: "code"),
+            URLQueryItem(name: "scope", value: oauthScopes),
+            URLQueryItem(name: "state", value: state)
+        ]
+        guard let url = comps.url else {
+            log("构造授权 URL 失败")
+            return
+        }
+        log("正在打开飞书授权页…请登录并点「同意授权」")
+        let session = ASWebAuthenticationSession(url: url, callbackURLScheme: "micprobe") { callbackURL, error in
+            if let error {
+                log("授权未完成：\(error.localizedDescription)")
+                return
+            }
+            guard let cb = callbackURL,
+                  let cp = URLComponents(url: cb, resolvingAgainstBaseURL: false),
+                  let code = cp.queryItems?.first(where: { $0.name == "code" })?.value else {
+                log("授权回调缺少 code：\(callbackURL?.absoluteString.prefix(120) ?? "nil")")
+                return
+            }
+            if cp.queryItems?.first(where: { $0.name == "error" })?.value != nil {
+                log("用户拒绝了授权")
+                return
+            }
+            exchangeCode(code: code, appID: cfg.appID, secret: cfg.secret, log: log)
+        }
+        session.presentationContextProvider = {
+            UIApplication.shared.connectedScenes
+                .compactMap { ($0 as? UIWindowScene)?.keyWindow }
+        }
+        authSession = session
+        session.start()
+    }
+
+    /// 授权码换 user_access_token + refresh_token（v2 接口，JSON 请求体）
+    private static func exchangeCode(code: String, appID: String, secret: String,
+                                     log: @escaping (String) -> Void) {
+        tokenRequest(body: ["grant_type": "authorization_code",
+                            "client_id": appID,
+                            "client_secret": secret,
+                            "code": code,
+                            "redirect_uri": redirectURI]) { result in
+            switch result {
+            case .success(let obj):
+                storeTokens(obj)
+                log("已绑定你的飞书身份 ✓ 之后消息以你本人名义发送")
+            case .failure(let msg):
+                log("换取用户 token 失败：\(msg)（请检查开放平台：重定向 URL 是否已添加 \(redirectURI)；权限是否已开通 im:message、offline_access 并发布版本）")
+            }
+        }
+    }
+
+    /// 确保拿到有效的 user_access_token（过期则用 refresh_token 续期）
+    private static func ensureUserToken(appID: String, secret: String,
+                                        completion: @escaping (String?, String?) -> Void) {
+        let ud = UserDefaults.standard
+        let cached = ud.string(forKey: userTokenKey) ?? ""
+        if !cached.isEmpty, Date().timeIntervalSince1970 < ud.double(forKey: userTokenExpKey) {
+            completion(nil, cached)
+            return
+        }
+        let refresh = ud.string(forKey: userRefreshKey) ?? ""
+        guard !refresh.isEmpty, Date().timeIntervalSince1970 < ud.double(forKey: userRefreshExpKey) else {
+            completion("用户授权已过期，请重新绑定身份", nil)
+            return
+        }
+        tokenRequest(body: ["grant_type": "refresh_token",
+                            "client_id": appID,
+                            "client_secret": secret,
+                            "refresh_token": refresh]) { result in
+            switch result {
+            case .success(let obj):
+                storeTokens(obj)
+                completion(nil, obj["access_token"] as? String)
+            case .failure(let msg):
+                completion("刷新用户 token 失败：\(msg)", nil)
+            }
+        }
+    }
+
+    /// 以用户本人名义发文本到与机器人的单聊（chat_id 固定，用户是会话成员）
+    static func sendAsUser(text: String, completion: @escaping (String?) -> Void) {
+        guard let cfg = parseAppConfig(webhook) else {
+            completion("用户身份发送需要应用模式配置（AppID,AppSecret）")
+            return
+        }
+        ensureUserToken(appID: cfg.appID, secret: cfg.secret) { err, token in
+            if let err { completion("以你的身份发送失败：\(err)"); return }
+            guard let token else { completion("以你的身份发送失败：无 token"); return }
+            var comps = URLComponents(string: "https://open.feishu.cn/open-apis/im/v1/messages")!
+            comps.queryItems = [URLQueryItem(name: "receive_id_type", value: "chat_id")]
+            guard let url = comps.url else {
+                completion("构造消息 URL 失败")
+                return
+            }
+            let contentJSON: String
+            if let d = try? JSONSerialization.data(withJSONObject: ["text": text]),
+               let s = String(data: d, encoding: .utf8) {
+                contentJSON = s
+            } else {
+                contentJSON = "{\"text\":\"\(text)\"}"
+            }
+            postJSON(url: url,
+                     body: ["receive_id": Config.feishuP2PChatID,
+                            "msg_type": "text",
+                            "content": contentJSON],
+                     headers: ["Authorization": "Bearer \(token)"]) { data, resp, err in
+                if let e = judgeCode(data: data, resp: resp, err: err) {
+                    completion("以你的身份发送失败：\(e)")
+                } else {
+                    completion(nil)
+                }
+            }
+        }
+    }
+
+    /// 调用 v2 oauth/token 接口
+    private static func tokenRequest(body: [String: Any],
+                                     completion: @escaping (Result<[String: Any], String>) -> Void) {
+        guard let url = URL(string: "https://open.feishu.cn/open-apis/authen/v2/oauth/token") else {
+            completion(.failure("URL 错误"))
+            return
+        }
+        var req = URLRequest(url: url, timeoutInterval: 15)
+        req.httpMethod = "POST"
+        req.setValue("application/json; charset=utf-8", forHTTPHeaderField: "Content-Type")
+        req.httpBody = try? JSONSerialization.data(withJSONObject: body)
+        URLSession.shared.dataTask(with: req) { data, _, err in
+            if let err {
+                completion(.failure("网络错误 \(err.localizedDescription)"))
+                return
+            }
+            guard let data,
+                  let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+                completion(.failure("响应解析失败"))
+                return
+            }
+            if let code = obj["code"] as? Int, code != 0 {
+                completion(.failure("code=\(code) \(obj["msg"] as? String ?? "")"))
+                return
+            }
+            guard let at = obj["access_token"] as? String else {
+                completion(.failure("缺少 access_token：\(obj["msg"] as? String ?? "")"))
+                return
+            }
+            completion(.success(obj))
+        }.resume()
+    }
+
+    /// 保存 access_token / refresh_token 及到期时间（提前 5 分钟/1 小时判过期）
+    private static func storeTokens(_ obj: [String: Any]) {
+        let ud = UserDefaults.standard
+        let now = Date().timeIntervalSince1970
+        ud.set(obj["access_token"] as? String ?? "", forKey: userTokenKey)
+        ud.set(now + (obj["expires_in"] as? Double ?? 7200) - 300, forKey: userTokenExpKey)
+        if let rt = obj["refresh_token"] as? String, !rt.isEmpty {
+            ud.set(rt, forKey: userRefreshKey)
+            ud.set(now + (obj["refresh_token_expires_in"] as? Double ?? 604_800) - 3600,
+                   forKey: userRefreshExpKey)
         }
     }
 

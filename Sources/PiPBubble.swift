@@ -20,6 +20,8 @@ final class PiPBubble: NSObject {
     private var pipController: AVPictureInPictureController?
     private var format: CMFormatDescription?
     private var timer: Timer?
+    private var possibleObservation: NSKeyValueObservation?
+    private var autoStartRequested = false
     private weak var audio: AudioEngine?
     private weak var hostView: UIView?
 
@@ -60,16 +62,53 @@ final class PiPBubble: NSObject {
         }
     }
 
-    /// 点「悬浮球」按钮：直接进入画中画小窗
+    /// 点「悬浮球」按钮：进入画中画小窗。
+    /// 四重保障：直接启动 → KVO 等画面就绪自动启动 → 0.8 秒未生效则退到桌面
+    /// （canStartPictureInPictureAutomaticallyFromInline 会在退后台时自动进入）→ 提示按 Home。
     func startPresentation() {
         setupPiP()
         renderNow()
         guard let pip = pipController else { return }
+        autoStartRequested = true
+        let supported = AVPictureInPictureController.isPictureInPictureSupported()
+        onLog?("悬浮窗：supported=\(supported) possible=\(pip.isPictureInPicturePossible)")
+        tryStartOrWait()
+    }
+
+    private func tryStartOrWait() {
+        guard let pip = pipController else { return }
         if pip.isPictureInPicturePossible {
             pip.startPictureInPicture()
-        } else {
-            onLog?("悬浮窗还没就绪（画面缓冲中），稍等 1 秒再点一次，或直接按 Home 键回桌面自动进入")
+            // 0.8 秒后仍未进入画中画 → 主动退到后台，触发「自动从内嵌进入画中画」
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.8) { [weak self] in
+                guard let self, let pip = self.pipController, !pip.isPictureInPictureActive else { return }
+                self.suspendToHome()
+            }
+        } else if autoStartRequested {
+            // 画面缓冲未就绪：监听 isPictureInPicturePossible，一就绪立刻自动启动
+            if possibleObservation == nil {
+                possibleObservation = pip.observe(\.isPictureInPicturePossible, options: [.new]) { [weak self] observed, _ in
+                    Task { @MainActor in
+                        guard let self else { return }
+                        if observed.isPictureInPicturePossible, self.autoStartRequested {
+                            self.tryStartOrWait()
+                        }
+                    }
+                }
+            }
+            onLog?("悬浮窗画面准备中，就绪后自动进入（也可直接按 Home 键）")
         }
+    }
+
+    /// 把 App 退到后台（回到桌面）。私有 suspend 选择器，侧载应用可用。
+    private func suspendToHome() {
+        let sel = Selector(("suspend"))
+        guard UIApplication.shared.responds(to: sel) else {
+            onLog?("请按 Home 键回到桌面，悬浮窗会自动出现")
+            return
+        }
+        UIApplication.shared.perform(sel)
+        onLog?("已回到桌面，悬浮窗应已出现；点小窗的展开按钮可回到本 App")
     }
 
     private func setupPiP() {
@@ -117,7 +156,7 @@ final class PiPBubble: NSObject {
                 .font: UIFont.systemFont(ofSize: 22, weight: .regular),
                 .foregroundColor: UIColor(white: 1, alpha: 0.55)
             ]
-            ("「85号」开始 ·「结束/发送/完毕」发送" as NSString)
+            ("「85号」开始 ·「结束/发送完毕」发送" as NSString)
                 .draw(at: CGPoint(x: 56, y: frameH - 46), withAttributes: tip)
         }
         guard let cg = img.cgImage else { return }
@@ -228,6 +267,11 @@ extension PiPBubble: AVPictureInPictureControllerDelegate {
     /// 点画中画小窗的「展开」按钮回到 App：恢复完整界面
     func pictureInPictureController(_ pictureInPictureController: AVPictureInPictureController,
                                     restoreUserInterfaceForPictureInPictureStopWithCompletionHandler completionHandler: @escaping (Bool) -> Void) {
+        autoStartRequested = false
         completionHandler(true)
+    }
+
+    func pictureInPictureControllerDidStopPictureInPicture(_ pictureInPictureController: AVPictureInPictureController) {
+        autoStartRequested = false
     }
 }
