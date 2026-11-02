@@ -43,7 +43,7 @@ struct ContentView: View {
                     withAnimation(.easeInOut(duration: 0.2)) { isMini = true }
                 } label: {
                     Label("悬浮球", systemImage: "record.circle")
-                        .font(.footnote.medium)
+                        .font(.footnote.weight(.medium))
                 }
                 .buttonStyle(.bordered)
             }
