@@ -74,9 +74,11 @@ enum OpusCodec {
         let outBufSize = 131_072
         let outData = UnsafeMutableRawPointer.allocate(byteCount: outBufSize, alignment: 16)
         defer { outData.deallocate() }
-        let packetDescs = UnsafeMutablePointer<AudioStreamPacketDescription>
+        // outPacketDescription 是「指针的指针」的数组（每元素可空）
+        let packetDescs = UnsafeMutablePointer<UnsafeMutablePointer<AudioStreamPacketDescription>?>
             .allocate(capacity: maxPacketsPerCall)
         defer { packetDescs.deallocate() }
+        for i in 0..<maxPacketsPerCall { packetDescs[i] = nil }
 
         let abl = AudioBufferList.allocate(maximumBuffers: 1)
         defer { abl.unsafeMutablePointer.deallocate() }
@@ -99,7 +101,7 @@ enum OpusCodec {
                 if got > 0, produced > 0 {
                     let chunk = Data(bytes: outData, count: Int(produced))
                     for i in 0..<got {
-                        let d = packetDescs[i]
+                        guard let d = packetDescs[i]?.pointee else { continue }
                         let start = Int(d.mStartOffset)
                         let size = Int(d.mDataByteSize)
                         guard start >= 0, size > 0, start + size <= chunk.count else { continue }
@@ -118,12 +120,8 @@ enum OpusCodec {
     }
 
     /// 输入供给回调：把剩余 PCM 逐段交给 AudioConverter
-    /// （AudioConverterInputProc 的 C 函数指针类型，Swift 里用 @convention(c) 显式声明）
-    private static let fillInput: @convention(c) (AudioConverterRef,
-                                                  UnsafeMutablePointer<UInt32>,
-                                                  UnsafeMutablePointer<AudioBufferList>,
-                                                  UnsafeMutablePointer<AudioStreamPacketDescription>?,
-                                                  UnsafeMutableRawPointer?) -> OSStatus = { _, ioNumPackets, ioData, _, inUserData in
+    /// （签名即 AudioConverterComplexInputDataProc：第 4 参是「指针的指针」数组）
+    private static let fillInput: AudioConverterComplexInputDataProc = { _, ioNumPackets, ioData, _, inUserData in
         let ctx = Unmanaged<InputContext>.fromOpaque(inUserData!).takeUnretainedValue()
         let remain = ctx.samples.count - ctx.pos
         guard remain > 0 else {
@@ -133,9 +131,9 @@ enum OpusCodec {
         let n = min(remain, Int(ioNumPackets.pointee))
         ioNumPackets.pointee = UInt32(n)
         ioData.pointee.mNumberBuffers = 1
-        ioData.pointee.mBuffers.0.mNumberChannels = 1
-        ioData.pointee.mBuffers.0.mDataByteSize = UInt32(n * 2)
-        ioData.pointee.mBuffers.0.mData =
+        ioData.pointee.mBuffers.mNumberChannels = 1
+        ioData.pointee.mBuffers.mDataByteSize = UInt32(n * 2)
+        ioData.pointee.mBuffers.mData =
             UnsafeMutableRawPointer(mutating: UnsafeRawPointer(ctx.samples.baseAddress!
                 .advanced(by: ctx.pos)))
         ctx.pos += n

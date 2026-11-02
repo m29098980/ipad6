@@ -42,21 +42,6 @@ jobs:
           cp keywords.txt Model/keywords.txt
           ls -lh Model/
 
-      - name: 下载 ASR 转写模型（streaming zipformer small bilingual zh-en，int8）
-        run: |
-          set -euo pipefail
-          mkdir -p Model/Asr
-          curl -sSL --retry 3 -o /tmp/asr.tar.bz2 \
-            https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/sherpa-onnx-streaming-zipformer-small-bilingual-zh-en-2023-02-16.tar.bz2
-          mkdir -p /tmp/asr && tar xjf /tmp/asr.tar.bz2 -C /tmp/asr
-          D=/tmp/asr/sherpa-onnx-streaming-zipformer-small-bilingual-zh-en-2023-02-16
-          ls "$D" | head -20
-          cp $(ls "$D"/encoder*int8*.onnx | head -1) Model/Asr/encoder.onnx
-          cp $(ls "$D"/decoder-*.onnx | grep -v int8 | head -1) Model/Asr/decoder.onnx
-          cp $(ls "$D"/joiner-*.onnx | grep -v int8 | head -1) Model/Asr/joiner.onnx
-          cp "$D/tokens.txt" Model/Asr/tokens.txt
-          ls -lh Model/Asr/
-
       - name: 生成 Xcode 工程
         run: xcodegen generate --spec project.yml
 

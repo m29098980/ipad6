@@ -35,9 +35,6 @@ final class AudioEngine: ObservableObject {
     private var dictationPCM: [Int16] = []
     private var wakeCounter = 0
     private let processQueue = DispatchQueue(label: "com.jychan.micprobe.audio", qos: .userInitiated)
-    /// 端上兜底 ASR 的专用串行队列（sherpa-onnx 非线程安全）
-    private let onnxQueue = DispatchQueue(label: "com.jychan.micprobe.onnx", qos: .userInitiated)
-    private let onnxAsr = AsrEngine()
 
     private let targetFormat = AVAudioFormat(commonFormat: .pcmFormatInt16,
                                              sampleRate: Config.sampleRate,
@@ -108,8 +105,8 @@ final class AudioEngine: ObservableObject {
                     NSLog("MPBOX: step3 kws init ok")
                 }
             }
-            // 速记模式说明（三级转写：局域网 Qwen3-ASR → 端上模型 → 飞书语音消息）
-            append("速记模式：说「\(Config.wakeWord)」开始录音，「结束/发送/完毕」后转文字发飞书，失败依次用端上模型、语音消息")
+            // 速记模式说明（两级发送：局域网 Qwen3-ASR 文字 → 失败发语音消息）
+            append("速记模式：说「\(Config.wakeWord)」开始录音，「结束/发送/完毕」后转文字发飞书，失败自动改发语音消息")
             NSLog("MPBOX: beginCapture done")
         } catch {
             // 引擎启动失败时可能已经装了 tap，必须摘掉，否则下次开始会因重复安装崩溃
@@ -332,10 +329,9 @@ final class AudioEngine: ObservableObject {
             self.append("🎙 速记结束（\(reason)），录到 \(String(format: "%.1f", durationSec)) 秒，正在转写…")
             self.dictationText = ""
 
-            // 三级转写策略：
-            // 1) 局域网 Qwen3-ASR（快、准）
-            // 2) 失败 → 端上自带 sherpa-onnx 模型
-            // 3) 再失败 → Opus 编码发飞书「语音消息」（聊天气泡，可长按转文字）
+            // 两级发送策略：
+            // 1) 局域网 Qwen3-ASR → 飞书纯文字（快、准）
+            // 2) 失败 → Opus 编码发飞书「语音消息」（聊天气泡，可长按转文字）
             RemoteASR.transcribe(pcm: finalSamples, sampleRate: Int(Config.sampleRate)) { [weak self] result in
                 guard let self else { return }
                 let trimmed = result.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -349,31 +345,8 @@ final class AudioEngine: ObservableObject {
                     }
                     return
                 }
-
-                // 二级：端上自带模型（懒加载，专用串行队列）
-                self.append("局域网转写失败（\(trimmed)），改用端上模型转写…")
-                self.onnxQueue.async {
-                    if !self.onnxAsr.ready, let err = self.onnxAsr.setup() {
-                        DispatchQueue.main.async {
-                            self.sendVoiceFallback(samples: finalSamples, durationSec: durationSec,
-                                                   reason: "端上模型初始化失败：\(err)")
-                        }
-                        return
-                    }
-                    let text = self.onnxAsr.transcribeAll(pcm: finalSamples)
-                        .trimmingCharacters(in: .whitespacesAndNewlines)
-                    DispatchQueue.main.async {
-                        if !text.isEmpty {
-                            self.append("端上转写结果：\(text)")
-                            Feishu.send(text: text) { err in
-                                self.append(err.map { "飞书发送失败：\($0)" } ?? "飞书文字已发送 ✓（端上模型）")
-                            }
-                        } else {
-                            self.sendVoiceFallback(samples: finalSamples, durationSec: durationSec,
-                                                   reason: "端上转写也为空")
-                        }
-                    }
-                }
+                self.sendVoiceFallback(samples: finalSamples, durationSec: durationSec,
+                                       reason: "局域网转写失败（\(trimmed)）")
             }
         }
     }
@@ -383,7 +356,7 @@ final class AudioEngine: ObservableObject {
         append(line)
     }
 
-    /// 三级兜底：两次转写都失败 → Opus 编码发飞书语音消息
+    /// 二级兜底：局域网转写失败 → Opus 编码发飞书语音消息
     private func sendVoiceFallback(samples: [Int16], durationSec: Double, reason: String) {
         append("\(reason)，改发飞书语音消息…")
         OpusCodec.encode(pcm: samples, sampleRate: Int(Config.sampleRate)) { [weak self] ogg, encErr in

@@ -11,6 +11,7 @@ import UIKit
 /// 真正浮在桌面 / 任意 App 上方，可拖动，点小窗回到完整界面。
 ///
 /// 画面内容：深色底 + 状态圆点（绿=监听 / 橙=速记中 / 灰=已停止）+ 状态文字。
+@MainActor
 final class PiPBubble: NSObject {
 
     static let shared = PiPBubble()
@@ -53,7 +54,9 @@ final class PiPBubble: NSObject {
         setupPiP()
         renderNow()
         timer = Timer.scheduledTimer(withTimeInterval: 0.5, repeats: true) { [weak self] _ in
-            self?.renderNow()
+            MainActor.assumeIsolated {
+                self?.renderNow()
+            }
         }
     }
 
@@ -192,6 +195,14 @@ extension PiPBubble: AVPictureInPictureSampleBufferPlaybackDelegate {
 
     func pictureInPictureController(_ pictureInPictureController: AVPictureInPictureController,
                                     didTransitionToRenderSize newRenderSize: CMVideoDimensions) {}
+
+    // ---- skipByInterval（required，Swift 标签 completion:）----
+
+    func pictureInPictureController(_ pictureInPictureController: AVPictureInPictureController,
+                                    skipByInterval skipInterval: CMTime,
+                                    completion: @escaping () -> Void) {
+        completion()
+    }
 
     // ---- 属性形式（旧版 SDK 的 required 成员）----
 
