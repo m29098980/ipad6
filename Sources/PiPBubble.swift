@@ -170,9 +170,14 @@ final class PiPBubble: NSObject {
     }
 }
 
-// MARK: - PiP 播放代理（只实现协议要求的 4 个 required 成员）
+// MARK: - PiP 播放代理
+// 协议 required 成员同时存在「方法形式」与「属性形式」两代 API，
+// 这里全量实现两者，保证在任何 SDK 版本下都满足 conformance。
+// skipByInterval 为 optional，不实现。
 
 extension PiPBubble: AVPictureInPictureSampleBufferPlaybackDelegate {
+
+    // ---- 方法形式（Apple 文档标注 Required）----
 
     func pictureInPictureController(_ pictureInPictureController: AVPictureInPictureController,
                                     setPlaying playing: Bool) {}
@@ -187,6 +192,17 @@ extension PiPBubble: AVPictureInPictureSampleBufferPlaybackDelegate {
 
     func pictureInPictureController(_ pictureInPictureController: AVPictureInPictureController,
                                     didTransitionToRenderSize newRenderSize: CMVideoDimensions) {}
+
+    // ---- 属性形式（旧版 SDK 的 required 成员）----
+
+    var isPlaybackPaused: Bool { false }
+    var timeRange: CMTimeRange { CMTimeRange(start: .zero, duration: CMTime(value: 1, timescale: 2)) }
+    var duration: CMTime { CMTime(value: 1, timescale: 2) }
+    var playbackRate: Float { 1.0 }
+    var isPlaybackBufferEmpty: Bool { false }
+    var isPlaybackBufferFull: Bool { true }
+
+    func pictureInPictureControllerTimeControlDidChanged(_ pictureInPictureController: AVPictureInPictureController) {}
 }
 
 // MARK: - PiP 生命周期代理

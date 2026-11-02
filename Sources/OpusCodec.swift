@@ -6,6 +6,9 @@ import Foundation
 /// 所以录音要先转成 .opus 才能以语音气泡形式出现在聊天里。
 enum OpusCodec {
 
+    /// kAudioConverterErr_RequiresMoreInputData（'insz'）在 Swift 中未导出，用字面值
+    private static let requiresMoreInputData = OSStatus(0x696E_737A)
+
     /// 异步编码：成功回调 Ogg Opus 数据；失败回调错误描述
     static func encode(pcm: [Int16], sampleRate: Int,
                        completion: @escaping (Data?, String?) -> Void) {
@@ -90,7 +93,7 @@ enum OpusCodec {
                                                        &outPacketCount,
                                                        abl.unsafeMutablePointer,
                                                        packetDescs)
-            if fill == noErr || fill == kAudioConverterErr_RequiresMoreInputData {
+            if fill == noErr || fill == requiresMoreInputData {
                 let got = Int(outPacketCount)
                 let produced = abl[0].mDataByteSize
                 if got > 0, produced > 0 {
@@ -103,7 +106,7 @@ enum OpusCodec {
                         packets.append(chunk.subdata(in: start..<(start + size)))
                     }
                 }
-                if fill == kAudioConverterErr_RequiresMoreInputData { break }  // 输入耗尽
+                if fill == requiresMoreInputData { break }  // 输入耗尽
                 if got == 0 { break }
             } else {
                 throw CodecError("Opus 编码失败（OSStatus=\(fill)）")
@@ -115,7 +118,12 @@ enum OpusCodec {
     }
 
     /// 输入供给回调：把剩余 PCM 逐段交给 AudioConverter
-    private static let fillInput: AudioConverterInputProcedure = { _, ioNumPackets, ioData, _, inUserData in
+    /// （AudioConverterInputProc 的 C 函数指针类型，Swift 里用 @convention(c) 显式声明）
+    private static let fillInput: @convention(c) (AudioConverterRef,
+                                                  UnsafeMutablePointer<UInt32>,
+                                                  UnsafeMutablePointer<AudioBufferList>,
+                                                  UnsafeMutablePointer<AudioStreamPacketDescription>?,
+                                                  UnsafeMutableRawPointer?) -> OSStatus = { _, ioNumPackets, ioData, _, inUserData in
         let ctx = Unmanaged<InputContext>.fromOpaque(inUserData!).takeUnretainedValue()
         let remain = ctx.samples.count - ctx.pos
         guard remain > 0 else {
