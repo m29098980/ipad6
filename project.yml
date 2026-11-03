@@ -39,7 +39,7 @@ targets:
         CFBundleDisplayName: Bavo
         CFBundleName: Bavo
         CFBundleShortVersionString: "1.9"
-        CFBundleVersion: "24"
+        CFBundleVersion: "25"
         UILaunchScreen: {}
         UIRequiresFullScreen: true
         UIStatusBarStyle: UIStatusBarStyleDefault
