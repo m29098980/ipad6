@@ -14,3 +14,6 @@ dist/
 dist/
 工具/
 MicProbe.ipa
+syslog*.txt
+*.png
+ipa_pull/

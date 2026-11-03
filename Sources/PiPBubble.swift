@@ -1,6 +1,7 @@
 import AVKit
 import AVFoundation
 import UIKit
+import os.log
 
 /// 画中画悬浮球。
 ///
@@ -17,6 +18,9 @@ import UIKit
 final class PiPBubble: NSObject {
 
     static let shared = PiPBubble()
+
+    /// 远程诊断日志（syslog 可见，电脑端 pymobiledevice3 syslog live 可抓）
+    private let log = Logger(subsystem: "com.jychan.micprobe", category: "pip")
 
     private let displayLayer = AVSampleBufferDisplayLayer()
     private var pipController: AVPictureInPictureController?
@@ -74,6 +78,7 @@ final class PiPBubble: NSObject {
         guard let pip = pipController else { return }
         autoStartRequested = true
         let supported = AVPictureInPictureController.isPictureInPictureSupported()
+        log.info("startPresentation: supported=\(supported, privacy: .public) possible=\(pip.isPictureInPicturePossible, privacy: .public)")
         onLog?("悬浮窗：supported=\(supported) possible=\(pip.isPictureInPicturePossible)")
         tryStartOrWait()
     }
@@ -210,16 +215,20 @@ final class PiPBubble: NSObject {
 
     private func enqueue(_ pb: CVPixelBuffer) {
         if format == nil {
+            // 关键修复：未压缩像素缓冲必须用 CreateForImageBuffer 建格式说明。
+            // 之前误用 kCMVideoCodecType_MPEG4Video（压缩视频格式），
+            // 系统把 BGRA 图像帧当坏数据全部丢弃 → 画中画等不到画面 → -1003 启动失败。
             var fmtOut: CMFormatDescription?
-            let st = CMVideoFormatDescriptionCreate(
+            let st = CMVideoFormatDescriptionCreateForImageBuffer(
                 allocator: kCFAllocatorDefault,
-                codecType: kCMVideoCodecType_MPEG4Video,
-                width: Int32(frameW),
-                height: Int32(frameH),
-                extensions: nil,
+                imageBuffer: pb,
                 formatDescriptionOut: &fmtOut)
-            guard st == noErr, let fmt = fmtOut else { return }
+            guard st == noErr, let fmt = fmtOut else {
+                log.error("format create failed, status=\(st, privacy: .public)")
+                return
+            }
             format = fmt
+            log.info("format created OK (image-buffer backed)")
         }
         guard let fmt = format else { return }
         var timing = CMSampleTimingInfo(
@@ -236,8 +245,17 @@ final class PiPBubble: NSObject {
             formatDescription: fmt,
             sampleTiming: &timing,
             sampleBufferOut: &sbBox)
-        guard st == noErr, let sb = sbBox else { return }
+        guard st == noErr, let sb = sbBox else {
+            log.error("sample buffer create failed, status=\(st, privacy: .public)")
+            return
+        }
         displayLayer.enqueue(sb)
+        // 每 2 秒向 syslog 汇报一次入队与图层状态，便于远程诊断
+        if tick % 4 == 0 {
+            let status = displayLayer.status.rawValue
+            let err = displayLayer.error?.localizedDescription ?? "none"
+            log.info("tick=\(self.tick, privacy: .public) enqueued OK, layerStatus=\(status, privacy: .public), layerError=\(err, privacy: .public)")
+        }
     }
 
     // MARK: - 绘制子步骤（拆小函数避免编译器类型检查超时）
@@ -356,6 +374,7 @@ extension PiPBubble: AVPictureInPictureControllerDelegate {
 
     func pictureInPictureController(_ pictureInPictureController: AVPictureInPictureController,
                                     failedToStartPictureInPictureWithError error: Error) {
+        log.error("PiP failed to start: \(error.localizedDescription, privacy: .public)")
         onLog?("悬浮窗启动失败：\(error.localizedDescription)")
     }
 
