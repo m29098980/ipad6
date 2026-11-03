@@ -29,6 +29,7 @@ targets:
       - path: Model
         type: folder
         buildPhase: resources
+      - path: Assets
     dependencies:
       - package: sherpaonnx
         product: sherpa-onnx
@@ -38,7 +39,7 @@ targets:
         CFBundleDisplayName: Bavo
         CFBundleName: Bavo
         CFBundleShortVersionString: "1.9"
-        CFBundleVersion: "21"
+        CFBundleVersion: "22"
         UILaunchScreen: {}
         UIRequiresFullScreen: true
         UIStatusBarStyle: UIStatusBarStyleDefault
@@ -58,6 +59,7 @@ targets:
         PRODUCT_BUNDLE_IDENTIFIER: com.jychan.micprobe
         GENERATE_INFOPLIST_FILE: NO
         INFOPLIST_FILE: Support/Info.plist
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
         SWIFT_STRICT_CONCURRENCY: minimal
 
 schemes:
