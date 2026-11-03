@@ -14,6 +14,18 @@ private extension Color {
     static let hudDim = Color.white.opacity(0.45)
 }
 
+/// 让 .foregroundStyle(.hudText) 这类 ShapeStyle 上下文也能解析到上面的颜色
+private extension ShapeStyle where Self == Color {
+    static var hudBgTop: Color { Color.hudBgTop }
+    static var hudBgBottom: Color { Color.hudBgBottom }
+    static var neonOrange: Color { Color.neonOrange }
+    static var neonCyan: Color { Color.neonCyan }
+    static var hudLine: Color { Color.hudLine }
+    static var hudPanel: Color { Color.hudPanel }
+    static var hudText: Color { Color.hudText }
+    static var hudDim: Color { Color.hudDim }
+}
+
 // MARK: - 主界面
 
 struct ContentView: View {
