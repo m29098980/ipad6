@@ -10,8 +10,10 @@ import UIKit
 /// 通过 AVPictureInPictureController 缩成系统画中画小窗——
 /// 真正浮在桌面 / 任意 App 上方，可拖动，点小窗回到完整界面。
 ///
-/// 画面内容：深色底 + 状态圆点（绿=监听 / 橙=速记中 / 灰=已停止）+ 状态文字。
-@MainActor
+/// 关键：帧渲染必须跑在【后台串行队列】上。
+/// 之前用主线程 Timer，App 退到后台后主线程 RunLoop 被冻结，
+/// 小窗画面停在最后一帧——唤醒后用户永远看不到状态变化。
+/// App 有 audio 后台模式，进程在后台存活，后台队列的定时器不会被冻结。
 final class PiPBubble: NSObject {
 
     static let shared = PiPBubble()
@@ -19,11 +21,14 @@ final class PiPBubble: NSObject {
     private let displayLayer = AVSampleBufferDisplayLayer()
     private var pipController: AVPictureInPictureController?
     private var format: CMFormatDescription?
-    private var timer: Timer?
     private var possibleObservation: NSKeyValueObservation?
     private var autoStartRequested = false
     private weak var audio: AudioEngine?
     private weak var hostView: UIView?
+
+    /// 后台渲染队列与定时器（后台不冻结的关键）
+    private let renderQueue = DispatchQueue(label: "pip.render", qos: .userInteractive)
+    private var renderTimer: DispatchSourceTimer?
 
     /// 日志回传给界面
     var onLog: ((String) -> Void)?
@@ -38,6 +43,7 @@ final class PiPBubble: NSObject {
     // MARK: - 挂载与展示
 
     /// 携带视频层的容器视图（SwiftUI 里用 UIViewRepresentable 嵌入做内嵌预览）
+    @MainActor
     func containerView() -> UIView {
         if let hostView { return hostView }
         let v = UIView(frame: CGRect(x: 0, y: 0, width: previewW, height: previewH))
@@ -49,25 +55,22 @@ final class PiPBubble: NSObject {
         return v
     }
 
-    /// 启动帧渲染（状态变化时画面每 0.5 秒刷新）
+    /// 启动帧渲染（后台队列每 0.5 秒刷新一帧，前后台都不停）
+    @MainActor
     func attach(audio: AudioEngine) {
-        guard timer == nil else { return }
+        guard renderTimer == nil else { return }
         self.audio = audio
         setupPiP()
-        renderNow()
-        timer = Timer.scheduledTimer(withTimeInterval: 0.5, repeats: true) { [weak self] _ in
-            MainActor.assumeIsolated {
-                self?.renderNow()
-            }
-        }
+        startRenderLoop()
     }
 
     /// 点「悬浮球」按钮：进入画中画小窗。
     /// 四重保障：直接启动 → KVO 等画面就绪自动启动 → 0.8 秒未生效则退到桌面
     /// （canStartPictureInPictureAutomaticallyFromInline 会在退后台时自动进入）→ 提示按 Home。
+    @MainActor
     func startPresentation() {
         setupPiP()
-        renderNow()
+        renderOnQueue()
         guard let pip = pipController else { return }
         autoStartRequested = true
         let supported = AVPictureInPictureController.isPictureInPictureSupported()
@@ -75,6 +78,7 @@ final class PiPBubble: NSObject {
         tryStartOrWait()
     }
 
+    @MainActor
     private func tryStartOrWait() {
         guard let pip = pipController else { return }
         if pip.isPictureInPicturePossible {
@@ -101,6 +105,7 @@ final class PiPBubble: NSObject {
     }
 
     /// 把 App 退到后台（回到桌面）。私有 suspend 选择器，侧载应用可用。
+    @MainActor
     private func suspendToHome() {
         let sel = Selector(("suspend"))
         guard UIApplication.shared.responds(to: sel) else {
@@ -111,6 +116,7 @@ final class PiPBubble: NSObject {
         onLog?("已回到桌面，悬浮窗应已出现；点小窗的展开按钮可回到本 App")
     }
 
+    @MainActor
     private func setupPiP() {
         guard pipController == nil else { return }
         guard AVPictureInPictureController.isPictureInPictureSupported() else {
@@ -125,27 +131,52 @@ final class PiPBubble: NSObject {
         pipController = pip
     }
 
-    // MARK: - 帧渲染
+    /// 启动后台渲染循环（前后台都不停）
+    @MainActor
+    private func startRenderLoop() {
+        guard renderTimer == nil else { return }
+        let t = DispatchSource.makeTimerSource(queue: renderQueue)
+        t.schedule(deadline: .now(), repeating: 0.5)
+        t.setEventHandler { [weak self] in
+            self?.renderOnQueue()
+        }
+        t.resume()
+        renderTimer = t
+    }
+
+    // MARK: - 帧渲染（后台队列执行）
 
     private var tick = 0
 
-    private func statusInfo() -> (String, UIColor, Bool) {
-        // 返回 (标题, 主题色, 是否速记状态)
-        guard let a = audio else { return ("已停止", .systemGray, false) }
-        if a.isDictating || a.isWakeupActive { return ("速记中", .orange, true) }
-        return a.isRunning ? ("监听中", .green, false) : ("已停止", .systemGray, false)
-    }
-
-    private func renderNow() {
+    /// 在渲染队列上执行的一帧：读状态 → 画图 → 入队
+    /// AudioEngine 的状态是简单值类型（Bool/Date/Int），跨线程读实际安全，
+    /// 且工程 SWIFT_STRICT_CONCURRENCY=minimal 不拦截。
+    private func renderOnQueue() {
         tick += 1
-        let (label, color, active) = statusInfo()
-        let pulse = (tick / 2) % 2 == 0   // 每 1 秒明暗交替，闪烁提示
+        let a = audio
+        let dictating = a?.isDictating ?? false
+        let wakeupActive = a?.isWakeupActive ?? false
+        let running = a?.isRunning ?? false
+        let started = a?.dictationStartedDate
 
-        // 速记已录秒数
+        let active = dictating || wakeupActive
+        let label: String
+        let color: UIColor
+        if active {
+            label = "速记中"
+            color = .orange
+        } else if running {
+            label = "监听中"
+            color = .green
+        } else {
+            label = "已停止"
+            color = .systemGray
+        }
         var elapsed = -1
-        if active, let start = audio?.dictationStartedDate {
+        if active, let start = started {
             elapsed = Int(Date().timeIntervalSince(start))
         }
+        let pulse = (tick / 2) % 2 == 0   // 每 1 秒明暗交替，闪烁提示
 
         let size = CGSize(width: frameW, height: frameH)
         let renderer = UIGraphicsImageRenderer(size: size)
@@ -155,7 +186,7 @@ final class PiPBubble: NSObject {
             self.drawDot(c, color: color, active: active, pulse: pulse)
             self.drawLabel(c, label: label, sub: active ? "● REC \(elapsed)s" : "「Bavo」唤醒",
                            active: active, pulse: pulse)
-            self.drawTip(c)
+            self.drawTip(c, active: active)
         }
         guard let cg = img.cgImage else { return }
 
@@ -214,7 +245,8 @@ final class PiPBubble: NSObject {
     private func drawBackground(_ c: UIGraphicsImageRendererContext, active: Bool) {
         let full = CGRect(x: 0, y: 0, width: frameW, height: frameH)
         if active {
-            UIColor.orange.setFill()
+            // 激活：高亮橙 + 红色渐变边缘，一眼可辨
+            UIColor(red: 1.0, green: 0.42, blue: 0.05, alpha: 1).setFill()
         } else {
             UIColor(red: 0.08, green: 0.09, blue: 0.11, alpha: 1).setFill()
         }
@@ -224,16 +256,18 @@ final class PiPBubble: NSObject {
     private func drawBorder(_ c: UIGraphicsImageRendererContext, color: UIColor,
                             active: Bool, pulse: Bool) {
         let full = CGRect(x: 0, y: 0, width: frameW, height: frameH)
-        let strokeColor: UIColor = active ? .white : color.withAlphaComponent(pulse ? 1.0 : 0.35)
+        let strokeColor: UIColor = active
+            ? (pulse ? .white : UIColor(red: 1.0, green: 0.95, blue: 0.7, alpha: 1))
+            : color.withAlphaComponent(pulse ? 1.0 : 0.35)
         c.cgContext.setStrokeColor(strokeColor.cgColor)
-        c.cgContext.setLineWidth(10)
-        c.cgContext.stroke(full.insetBy(dx: 5, dy: 5))
+        c.cgContext.setLineWidth(active ? 16 : 10)
+        c.cgContext.stroke(full.insetBy(dx: active ? 8 : 5, dy: active ? 8 : 5))
     }
 
     private func drawDot(_ c: UIGraphicsImageRendererContext, color: UIColor,
                          active: Bool, pulse: Bool) {
         var radius: CGFloat = 22
-        if pulse { radius = active ? 30 : 26 }
+        if pulse { radius = active ? 34 : 26 }
         let x: CGFloat = 76 - radius / 2
         let y = CGFloat(frameH) / 2 - radius / 2
         color.setFill()
@@ -251,25 +285,25 @@ final class PiPBubble: NSObject {
 
         let subColor: UIColor
         if active {
-            subColor = pulse ? .white : UIColor(white: 1, alpha: 0.75)
+            subColor = pulse ? .white : UIColor(white: 1, alpha: 0.8)
         } else {
             subColor = UIColor(white: 1, alpha: 0.6)
         }
         let subAttrs: [NSAttributedString.Key: Any] = [
-            .font: UIFont.monospacedDigitSystemFont(ofSize: 34, weight: .semibold),
+            .font: UIFont.monospacedDigitSystemFont(ofSize: 36, weight: .bold),
             .foregroundColor: subColor
         ]
         (sub as NSString).draw(at: CGPoint(x: 118, y: CGFloat(frameH) / 2 + 8),
                                withAttributes: subAttrs)
     }
 
-    private func drawTip(_ c: UIGraphicsImageRendererContext) {
+    private func drawTip(_ c: UIGraphicsImageRendererContext, active: Bool) {
         let tipAttrs: [NSAttributedString.Key: Any] = [
             .font: UIFont.systemFont(ofSize: 20, weight: .regular),
-            .foregroundColor: UIColor(white: 1, alpha: 0.5)
+            .foregroundColor: UIColor(white: 1, alpha: active ? 0.85 : 0.5)
         ]
-        ("说「结束」或「发送完毕」发送" as NSString)
-            .draw(at: CGPoint(x: 56, y: CGFloat(frameH) - 42), withAttributes: tipAttrs)
+        let tip = active ? "正在录音…说「结束」发送" : "说「巴沃 / 把握」开始速记"
+        (tip as NSString).draw(at: CGPoint(x: 56, y: CGFloat(frameH) - 42), withAttributes: tipAttrs)
     }
 }
 
