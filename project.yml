@@ -29,7 +29,7 @@ targets:
       - path: Model
         type: folder
         buildPhase: resources
-      - path: Assets
+      - path: Assets.xcassets
     dependencies:
       - package: sherpaonnx
         product: sherpa-onnx
@@ -39,7 +39,7 @@ targets:
         CFBundleDisplayName: Bavo
         CFBundleName: Bavo
         CFBundleShortVersionString: "1.9"
-        CFBundleVersion: "22"
+        CFBundleVersion: "23"
         UILaunchScreen: {}
         UIRequiresFullScreen: true
         UIStatusBarStyle: UIStatusBarStyleDefault
