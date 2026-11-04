@@ -200,11 +200,11 @@ final class PiPBubble: NSObject {
         // 画中画渲染走跨进程视频队列（App 进程 → mediaplaybackd），
         // 无 IOSurface 背板的缓冲无法跨进程传输 → 图层本地入队正常、系统队列 0 帧 → 窗口纯黑。
         var pbBox: CVPixelBuffer?
-        let iosurfAttrs: CFDictionary = [
-            kCVPixelBufferIOSurfacePropertiesKey as String: [String: Any]()
-        ] as CFDictionary
+        var bufAttrs = [String: Any]()
+        bufAttrs[String(kCVPixelBufferIOSurfacePropertiesKey)] = [String: Any]()
         let createStatus = CVPixelBufferCreate(kCFAllocatorDefault, frameW, frameH,
-                                               kCVPixelFormatType_32BGRA, iosurfAttrs, &pbBox)
+                                               kCVPixelFormatType_32BGRA,
+                                               bufAttrs as CFDictionary, &pbBox)
         guard createStatus == noErr, let pb = pbBox else { return }
         CVPixelBufferLockBaseAddress(pb, [])
         defer { CVPixelBufferUnlockBaseAddress(pb, []) }
