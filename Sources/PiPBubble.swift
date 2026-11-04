@@ -196,9 +196,15 @@ final class PiPBubble: NSObject {
         guard let cg = img.cgImage else { return }
 
         // 画进 CVPixelBuffer（BGRA）
+        // 关键修复 3：必须带 IOSurface 属性创建。
+        // 画中画渲染走跨进程视频队列（App 进程 → mediaplaybackd），
+        // 无 IOSurface 背板的缓冲无法跨进程传输 → 图层本地入队正常、系统队列 0 帧 → 窗口纯黑。
         var pbBox: CVPixelBuffer?
+        let iosurfAttrs: CFDictionary = [
+            kCVPixelBufferIOSurfacePropertiesKey as String: [String: Any]()
+        ] as CFDictionary
         let createStatus = CVPixelBufferCreate(kCFAllocatorDefault, frameW, frameH,
-                                               kCVPixelFormatType_32BGRA, nil, &pbBox)
+                                               kCVPixelFormatType_32BGRA, iosurfAttrs, &pbBox)
         guard createStatus == noErr, let pb = pbBox else { return }
         CVPixelBufferLockBaseAddress(pb, [])
         defer { CVPixelBufferUnlockBaseAddress(pb, []) }
@@ -269,8 +275,9 @@ final class PiPBubble: NSObject {
         // 每 2 秒向 syslog 汇报一次入队与图层状态，便于远程诊断
         if tick % 4 == 0 {
             let status = displayLayer.status.rawValue
+            let ready = displayLayer.isReadyForDisplay
             let err = displayLayer.error?.localizedDescription ?? "none"
-            log.info("tick=\(self.tick, privacy: .public) enqueued OK, layerStatus=\(status, privacy: .public), layerError=\(err, privacy: .public)")
+            log.info("tick=\(self.tick, privacy: .public) enqueued OK, layerStatus=\(status, privacy: .public), readyForDisplay=\(ready, privacy: .public), layerError=\(err, privacy: .public)")
         }
     }
 
