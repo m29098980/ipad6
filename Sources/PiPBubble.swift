@@ -249,6 +249,22 @@ final class PiPBubble: NSObject {
             log.error("sample buffer create failed, status=\(st, privacy: .public)")
             return
         }
+        // 关键修复 2：打「立即显示」标记。
+        // 不打标记时系统按时间戳排期显示，画中画管线下时间基准错位 → 帧永远排不上 → 纯黑。
+        // （已知问题：https://stackoverflow.com/questions/38364656）
+        if let arr = CMSampleBufferGetSampleAttachmentsArray(sb, createIfNecessary: true) {
+            if CFArrayGetCount(arr) > 0 {
+                let dict = unsafeBitCast(CFArrayGetValueAtIndex(arr, 0),
+                                         to: CFMutableDictionary.self)
+                CFDictionarySetValue(dict,
+                                     Unmanaged.passUnretained(kCMSampleAttachmentKey_DisplayImmediately).toOpaque(),
+                                     Unmanaged.passUnretained(kCFBooleanTrue).toOpaque())
+            }
+        }
+        guard displayLayer.isReadyForMoreMediaData else {
+            if tick % 4 == 0 { log.info("tick=\(self.tick, privacy: .public) layer not ready, skip") }
+            return
+        }
         displayLayer.enqueue(sb)
         // 每 2 秒向 syslog 汇报一次入队与图层状态，便于远程诊断
         if tick % 4 == 0 {
