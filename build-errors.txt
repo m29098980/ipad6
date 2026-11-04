@@ -1,0 +1,1 @@
+/Users/runner/work/ipad6/ipad6/Sources/PiPBubble.swift:278:38: error: 'isReadyForDisplay' is only available in iOS 17.4 or newer
