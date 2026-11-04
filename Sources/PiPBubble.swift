@@ -169,7 +169,7 @@ final class PiPBubble: NSObject {
         let color: UIColor
         if active {
             label = "速记中"
-            color = .orange
+            color = UIColor(red: 0.0, green: 1.0, blue: 0.35, alpha: 1)  // 亮绿（用户指定）
         } else if running {
             label = "监听中"
             color = .green
@@ -285,8 +285,8 @@ final class PiPBubble: NSObject {
     private func drawBackground(_ c: UIGraphicsImageRendererContext, active: Bool) {
         let full = CGRect(x: 0, y: 0, width: frameW, height: frameH)
         if active {
-            // 激活：高亮橙 + 红色渐变边缘，一眼可辨
-            UIColor(red: 1.0, green: 0.42, blue: 0.05, alpha: 1).setFill()
+            // 激活：亮绿底 + 白色渐变边缘，一眼可辨
+            UIColor(red: 0.0, green: 0.62, blue: 0.28, alpha: 1).setFill()
         } else {
             UIColor(red: 0.08, green: 0.09, blue: 0.11, alpha: 1).setFill()
         }
