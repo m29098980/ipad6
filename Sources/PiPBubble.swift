@@ -275,9 +275,8 @@ final class PiPBubble: NSObject {
         // 每 2 秒向 syslog 汇报一次入队与图层状态，便于远程诊断
         if tick % 4 == 0 {
             let status = displayLayer.status.rawValue
-            let ready = displayLayer.isReadyForDisplay
             let err = displayLayer.error?.localizedDescription ?? "none"
-            log.info("tick=\(self.tick, privacy: .public) enqueued OK, layerStatus=\(status, privacy: .public), readyForDisplay=\(ready, privacy: .public), layerError=\(err, privacy: .public)")
+            log.info("tick=\(self.tick, privacy: .public) enqueued OK, layerStatus=\(status, privacy: .public), layerError=\(err, privacy: .public)")
         }
     }
 
