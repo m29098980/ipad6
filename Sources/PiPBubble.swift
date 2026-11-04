@@ -37,9 +37,13 @@ final class PiPBubble: NSObject {
     /// 日志回传给界面
     var onLog: ((String) -> Void)?
 
-    /// 视频帧尺寸（16:9，PiP 小窗按此比例渲染）
-    private let frameW = 480
-    private let frameH = 270
+    /// 视频帧尺寸（16:9）。PiP 小窗默认大小随源分辨率缩放：源越小窗越小。
+    /// 160x90 相比 480x270 面积约 1/9（≈用户要求的 1/10）。
+    private let frameW = 160
+    private let frameH = 90
+    /// 绘制坐标基准：绘制代码仍按 480x270 布局，渲染时整体缩放到 frameW/H
+    private let baseW: CGFloat = 480
+    private let baseH: CGFloat = 270
     /// 内嵌预览窗尺寸
     private let previewW: CGFloat = 144
     private let previewH: CGFloat = 81
@@ -186,12 +190,16 @@ final class PiPBubble: NSObject {
         let size = CGSize(width: frameW, height: frameH)
         let renderer = UIGraphicsImageRenderer(size: size)
         let img = renderer.image { c in
+            let s = CGFloat(self.frameW) / self.baseW
+            c.cgContext.saveGState()
+            c.cgContext.scaleBy(x: s, y: s)
             self.drawBackground(c, active: active)
             self.drawBorder(c, color: color, active: active, pulse: pulse)
             self.drawDot(c, color: color, active: active, pulse: pulse)
             self.drawLabel(c, label: label, sub: active ? "● REC \(elapsed)s" : "「Bavo」唤醒",
                            active: active, pulse: pulse)
             self.drawTip(c, active: active)
+            c.cgContext.restoreGState()
         }
         guard let cg = img.cgImage else { return }
 
@@ -283,7 +291,7 @@ final class PiPBubble: NSObject {
     // MARK: - 绘制子步骤（拆小函数避免编译器类型检查超时）
 
     private func drawBackground(_ c: UIGraphicsImageRendererContext, active: Bool) {
-        let full = CGRect(x: 0, y: 0, width: frameW, height: frameH)
+        let full = CGRect(x: 0, y: 0, width: baseW, height: baseH)
         if active {
             // 激活：亮绿底 + 白色渐变边缘，一眼可辨
             UIColor(red: 0.0, green: 0.62, blue: 0.28, alpha: 1).setFill()
@@ -295,7 +303,7 @@ final class PiPBubble: NSObject {
 
     private func drawBorder(_ c: UIGraphicsImageRendererContext, color: UIColor,
                             active: Bool, pulse: Bool) {
-        let full = CGRect(x: 0, y: 0, width: frameW, height: frameH)
+        let full = CGRect(x: 0, y: 0, width: baseW, height: baseH)
         let strokeColor: UIColor = active
             ? (pulse ? .white : UIColor(red: 1.0, green: 0.95, blue: 0.7, alpha: 1))
             : color.withAlphaComponent(pulse ? 1.0 : 0.35)
@@ -309,7 +317,7 @@ final class PiPBubble: NSObject {
         var radius: CGFloat = 22
         if pulse { radius = active ? 34 : 26 }
         let x: CGFloat = 76 - radius / 2
-        let y = CGFloat(frameH) / 2 - radius / 2
+        let y = CGFloat(baseH) / 2 - radius / 2
         color.setFill()
         c.cgContext.fillEllipse(in: CGRect(x: x, y: y, width: radius, height: radius))
     }
@@ -320,7 +328,7 @@ final class PiPBubble: NSObject {
             .font: UIFont.systemFont(ofSize: 56, weight: .bold),
             .foregroundColor: UIColor.white
         ]
-        (label as NSString).draw(at: CGPoint(x: 118, y: CGFloat(frameH) / 2 - 62),
+        (label as NSString).draw(at: CGPoint(x: 118, y: CGFloat(baseH) / 2 - 62),
                                  withAttributes: titleAttrs)
 
         let subColor: UIColor
@@ -333,7 +341,7 @@ final class PiPBubble: NSObject {
             .font: UIFont.monospacedDigitSystemFont(ofSize: 36, weight: .bold),
             .foregroundColor: subColor
         ]
-        (sub as NSString).draw(at: CGPoint(x: 118, y: CGFloat(frameH) / 2 + 8),
+        (sub as NSString).draw(at: CGPoint(x: 118, y: CGFloat(baseH) / 2 + 8),
                                withAttributes: subAttrs)
     }
 
@@ -343,7 +351,7 @@ final class PiPBubble: NSObject {
             .foregroundColor: UIColor(white: 1, alpha: active ? 0.85 : 0.5)
         ]
         let tip = active ? "正在录音…说「结束」发送" : "说「巴沃 / 把握」开始速记"
-        (tip as NSString).draw(at: CGPoint(x: 56, y: CGFloat(frameH) - 42), withAttributes: tipAttrs)
+        (tip as NSString).draw(at: CGPoint(x: 56, y: CGFloat(baseH) - 42), withAttributes: tipAttrs)
     }
 }
 
